@@ -42,6 +42,10 @@ APK 不提交到 Git 仓库，通过 GitHub Releases 发布。
 
 包名：`com.yiye.ledger`
 
+下载地址：
+
+https://github.com/white-catyy/yiye-ledger/releases/tag/v1.1.0
+
 ## 验证
 
 ```bash

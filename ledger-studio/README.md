@@ -37,16 +37,16 @@ npx expo export --platform web --output-dir dist
 
 ## Android APK
 
-可直接安装的测试版 APK（修复按钮触控、状态栏避让和页面重复问题）：
+可直接安装的 ARM64 测试版 APK（修复按钮触控、状态栏避让和页面重复问题）：
 
 ```text
-artifacts/yiye-ledger-v1.1.0.apk
+https://github.com/white-catyy/yiye-ledger/releases/download/v1.1.0/yiye-ledger-v1.1.0-arm64.apk
 ```
 
 - 应用名称：一页账
 - 包名：`com.yiye.ledger`
 - 版本：`1.1.0 (2)`
-- 支持架构：`arm64-v8a`、`armeabi-v7a`、`x86`、`x86_64`
-- SHA-256：`190DBB43CC601921C34CAC68426BADF8B3A5AE6548272BB48292B371F685969F`
+- 支持架构：`arm64-v8a`
+- SHA-256：`E03D304AF9882083345E7112FE1DD2A0E6716FCD14DBB79AAE998DB149A0E34A`
 
-当前 APK 使用 Android 调试证书签名，适合本机安装和内部测试。准备发布到应用商店时，需要生成并妥善保管正式发布证书。
+当前 APK 使用 Android 调试证书签名，适合本机安装和内部测试。准备发布到应用商店时，需要生成并妥善保管正式发布证书。仓库外仍保留包含四种架构的通用 APK 构建文件。
