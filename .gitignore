@@ -1,0 +1,12 @@
+# Local Android deliverables are published through GitHub Releases.
+*.apk
+ledger-studio/artifacts/
+
+# IDE and local tool state
+ledger-studio/.idea/
+ledger-studio/.vscode/
+ledger-studio/.android/
+
+# OS metadata
+.DS_Store
+Thumbs.db
