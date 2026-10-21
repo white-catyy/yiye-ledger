@@ -32,8 +32,6 @@ npm run web
 
 ## Android
 
-APK 不提交到 Git 仓库，通过 GitHub Releases 发布。
-
 当前版本：`1.1.0 (2)`
 
 包名：`com.yiye.ledger`
