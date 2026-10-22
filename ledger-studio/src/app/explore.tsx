@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { SectionList, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { LedgerPalette } from '@/constants/theme';
@@ -10,45 +10,36 @@ import { useLedger } from '@/features/ledger/ledger-provider';
 import {
   formatEntryDate,
   formatMoney,
-  isSameMonth,
+  getDateKey,
   sumEntries,
   type LedgerEntry,
 } from '@/features/ledger/model';
-
-type MonthSection = {
-  date: string;
-  total: number;
-  data: LedgerEntry[];
-};
+import { MonthCalendar } from '@/features/ledger/month-calendar';
 
 export default function DetailScreen() {
   const { ledger, colors, upsertEntry, removeEntry } = useLedger();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const [selectedDate, setSelectedDate] = useState(getDateKey);
   const [editorVisible, setEditorVisible] = useState(false);
   const [editingEntry, setEditingEntry] = useState<LedgerEntry | null>(null);
 
-  const monthEntries = useMemo(
-    () => ledger.entries.filter((entry) => isSameMonth(entry.date)),
-    [ledger.entries]
-  );
-  const total = useMemo(() => sumEntries(monthEntries), [monthEntries]);
-  const sections = useMemo(() => {
-    const grouped = new Map<string, LedgerEntry[]>();
-    monthEntries.forEach((entry) => {
-      const list = grouped.get(entry.date) ?? [];
-      list.push(entry);
-      grouped.set(entry.date, list);
+  const entryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    ledger.entries.forEach((entry) => {
+      counts[entry.date] = (counts[entry.date] ?? 0) + 1;
     });
+    return counts;
+  }, [ledger.entries]);
 
-    return [...grouped.entries()]
-      .sort(([left], [right]) => right.localeCompare(left))
-      .map(([date, data]) => ({
-        date,
-        total: sumEntries(data),
-        data: [...data].sort((left, right) => left.time.localeCompare(right.time)),
-      }));
-  }, [monthEntries]);
+  const selectedEntries = useMemo(
+    () =>
+      ledger.entries
+        .filter((entry) => entry.date === selectedDate)
+        .sort((left, right) => left.time.localeCompare(right.time)),
+    [ledger.entries, selectedDate]
+  );
+  const selectedTotal = useMemo(() => sumEntries(selectedEntries), [selectedEntries]);
 
   const handleEdit = useCallback(
     (id: string) => {
@@ -58,6 +49,11 @@ export default function DetailScreen() {
     },
     [ledger.entries]
   );
+
+  const openNewEntry = useCallback(() => {
+    setEditingEntry(null);
+    setEditorVisible(true);
+  }, []);
 
   const contentStyle = useMemo(
     () => [
@@ -69,78 +65,89 @@ export default function DetailScreen() {
 
   return (
     <View style={styles.screen}>
-      <SectionList
+      <FlatList
         contentContainerStyle={contentStyle}
         contentInsetAdjustmentBehavior="automatic"
+        data={selectedEntries}
         keyExtractor={(item) => item.id}
-        ListEmptyComponent={<EmptyMonth colors={colors} styles={styles} />}
+        ListEmptyComponent={<EmptyDay colors={colors} styles={styles} />}
         ListFooterComponent={
-          sections.length > 0 ? (
-            <Text selectable style={styles.footerHint}>
-              这里按日期展示本月全部流水
-            </Text>
-          ) : undefined
+          <Text selectable style={styles.footerHint}>
+            轻点流水可修改，使用“补记这一天”添加遗漏记录
+          </Text>
         }
         ListHeaderComponent={
-          <View>
+          <View style={styles.headerStack}>
             <View style={styles.header}>
               <View style={styles.headerCopy}>
                 <Text selectable style={styles.title}>
-                  本月明细
+                  明细
                 </Text>
                 <Text selectable style={styles.subtitle}>
-                  按日期整理，不再重复首页内容
+                  按月选择日期，补记历史流水
                 </Text>
               </View>
               <View style={styles.headerIcon}>
-                <AppIcon name="document" size={21} color={colors.ink} />
+                <AppIcon name="calendar" size={21} color={colors.ink} />
               </View>
             </View>
 
-            <View style={styles.summary}>
-              <View>
-                <Text style={styles.summaryLabel}>本月流水</Text>
-                <Text selectable style={styles.summaryAmount}>
-                  ¥{formatMoney(total)}
+            <MonthCalendar
+              colors={colors}
+              entryCounts={entryCounts}
+              onSelectDate={setSelectedDate}
+              selectedDate={selectedDate}
+            />
+
+            <View style={styles.daySummary}>
+              <View style={styles.daySummaryCopy}>
+                <Text selectable style={styles.dayLabel}>
+                  {formatEntryDate(selectedDate)}
+                </Text>
+                <Text selectable style={styles.dayAmount}>
+                  ¥{formatMoney(selectedTotal)}
+                </Text>
+                <Text selectable style={styles.dayCount}>
+                  {selectedEntries.length} 笔流水
                 </Text>
               </View>
-              <View style={styles.countBadge}>
-                <Text selectable style={styles.countText}>
-                  {monthEntries.length} 笔
-                </Text>
-              </View>
+              <Pressable
+                accessibilityLabel={`补记${formatEntryDate(selectedDate)}的流水`}
+                accessibilityRole="button"
+                onPress={openNewEntry}
+                style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
+                <AppIcon name="plus" size={17} color={colors.ink} />
+                <Text style={styles.addButtonText}>补记这一天</Text>
+              </Pressable>
             </View>
+
+            {selectedEntries.length > 0 ? (
+              <View style={styles.listLabelRow}>
+                <Text style={styles.listLabel}>当天流水</Text>
+                <Text style={styles.listHint}>轻点可改</Text>
+              </View>
+            ) : null}
           </View>
         }
-        renderItem={({ item, index, section }) => (
+        removeClippedSubviews
+        renderItem={({ item, index }) => (
           <LedgerEntryRow
             amount={item.amount}
             categoryId={item.categoryId}
             id={item.id}
-            isLast={index === section.data.length - 1}
+            isLast={index === selectedEntries.length - 1}
             name={item.name}
             note={item.note}
             onEdit={handleEdit}
             time={item.time}
           />
         )}
-        renderSectionHeader={({ section }) => (
-          <View style={styles.dateHeader}>
-            <Text selectable style={styles.dateTitle}>
-              {formatEntryDate(section.date)}
-            </Text>
-            <Text selectable style={styles.dateTotal}>
-              ¥{formatMoney(section.total)}
-            </Text>
-          </View>
-        )}
-        sections={sections}
         showsVerticalScrollIndicator={false}
-        stickySectionHeadersEnabled={false}
       />
 
       <EntryEditor
         entry={editingEntry}
+        initialDate={selectedDate}
         onDelete={(id) => {
           removeEntry(id);
           setEditorVisible(false);
@@ -148,6 +155,7 @@ export default function DetailScreen() {
         onDismiss={() => setEditorVisible(false)}
         onSave={(entry) => {
           upsertEntry(entry);
+          setSelectedDate(entry.date);
           setEditorVisible(false);
         }}
         visible={editorVisible}
@@ -156,7 +164,7 @@ export default function DetailScreen() {
   );
 }
 
-function EmptyMonth({
+function EmptyDay({
   colors,
   styles,
 }: {
@@ -166,13 +174,13 @@ function EmptyMonth({
   return (
     <View style={styles.empty}>
       <View style={styles.emptyIcon}>
-        <AppIcon name="document" size={23} color={colors.aqua} />
+        <AppIcon name="calendar" size={23} color={colors.aqua} />
       </View>
       <Text selectable style={styles.emptyTitle}>
-        本月还没有流水
+        这一天还没有流水
       </Text>
       <Text selectable style={styles.emptyText}>
-        回到首页记下第一笔后，这里会按日期整理。
+        可以使用上方“补记这一天”添加历史记录。
       </Text>
     </View>
   );
@@ -192,8 +200,11 @@ function createStyles(colors: LedgerPalette) {
       paddingTop: 10,
       paddingBottom: process.env.EXPO_OS === 'web' ? 112 : 28,
     },
+    headerStack: {
+      gap: 14,
+    },
     header: {
-      minHeight: 68,
+      minHeight: 58,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
@@ -219,94 +230,104 @@ function createStyles(colors: LedgerPalette) {
       borderRadius: 15,
       backgroundColor: colors.frost,
     },
-    summary: {
-      minHeight: 122,
+    daySummary: {
+      minHeight: 104,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      borderRadius: 24,
+      gap: 14,
+      borderRadius: 22,
       backgroundColor: colors.card,
-      paddingHorizontal: 21,
-      boxShadow: '0px 12px 26px rgba(50, 82, 100, 0.07)',
+      paddingHorizontal: 18,
+      paddingVertical: 14,
     },
-    summaryLabel: {
-      marginBottom: 4,
+    daySummaryCopy: {
+      gap: 1,
+    },
+    dayLabel: {
       color: colors.inkSoft,
       fontSize: 11,
-      fontWeight: '600',
+      fontWeight: '700',
     },
-    summaryAmount: {
+    dayAmount: {
       color: colors.ink,
-      fontSize: 31,
+      fontSize: 27,
       fontVariant: ['tabular-nums'],
       fontWeight: '800',
-      letterSpacing: -1,
+      letterSpacing: -0.8,
     },
-    countBadge: {
-      borderRadius: 14,
+    dayCount: {
+      color: colors.muted,
+      fontSize: 10,
+    },
+    addButton: {
+      minHeight: 46,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      borderRadius: 15,
       backgroundColor: colors.frost,
       paddingHorizontal: 13,
-      paddingVertical: 8,
     },
-    countText: {
+    addButtonText: {
       color: colors.ink,
-      fontSize: 11,
+      fontSize: 11.5,
       fontWeight: '800',
     },
-    dateHeader: {
+    listLabelRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 4,
-      paddingTop: 22,
-      paddingBottom: 8,
+      paddingHorizontal: 3,
     },
-    dateTitle: {
+    listLabel: {
       color: colors.ink,
       fontSize: 14,
       fontWeight: '800',
     },
-    dateTotal: {
-      color: colors.inkSoft,
-      fontSize: 11,
-      fontVariant: ['tabular-nums'],
+    listHint: {
+      color: colors.aqua,
+      fontSize: 10,
       fontWeight: '700',
     },
     empty: {
-      minHeight: 230,
+      minHeight: 185,
       alignItems: 'center',
       justifyContent: 'center',
       gap: 7,
-      marginTop: 18,
-      borderRadius: 24,
+      marginTop: 12,
+      borderRadius: 22,
       backgroundColor: colors.card,
       paddingHorizontal: 28,
     },
     emptyIcon: {
-      width: 48,
-      height: 48,
+      width: 46,
+      height: 46,
       alignItems: 'center',
       justifyContent: 'center',
-      marginBottom: 4,
+      marginBottom: 3,
       borderRadius: 16,
       backgroundColor: colors.frost,
     },
     emptyTitle: {
       color: colors.ink,
-      fontSize: 15,
+      fontSize: 14,
       fontWeight: '800',
     },
     emptyText: {
       color: colors.inkSoft,
-      fontSize: 11,
+      fontSize: 10.5,
       lineHeight: 17,
       textAlign: 'center',
     },
     footerHint: {
-      paddingTop: 18,
+      paddingTop: 16,
       color: colors.muted,
-      fontSize: 10,
+      fontSize: 9.5,
       textAlign: 'center',
+    },
+    pressed: {
+      opacity: 0.68,
     },
   });
 }

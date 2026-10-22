@@ -18,6 +18,7 @@ import { useLedger } from './ledger-provider';
 import {
   CATEGORIES,
   createEntryId,
+  formatEntryDate,
   getDateKey,
   getCurrentTime,
   isValidTime,
@@ -39,42 +40,44 @@ type Draft = {
 type EntryEditorProps = {
   visible: boolean;
   entry: LedgerEntry | null;
+  initialDate?: string;
   onDismiss: () => void;
   onSave: (entry: LedgerEntry) => void;
   onDelete: (id: string) => void;
 };
 
-function getDraft(entry: LedgerEntry | null): Draft {
+function getDraft(entry: LedgerEntry | null, initialDate?: string): Draft {
   return {
     categoryId: entry?.categoryId ?? 'meal',
     name: entry?.name ?? '',
     note: entry?.note ?? '',
     amount: entry ? String(entry.amount) : '',
     time: entry?.time ?? getCurrentTime(),
-    date: entry?.date ?? getDateKey(),
+    date: entry?.date ?? initialDate ?? getDateKey(),
   };
 }
 
 export function EntryEditor({
   visible,
   entry,
+  initialDate,
   onDismiss,
   onSave,
   onDelete,
 }: EntryEditorProps) {
   const { colors } = useLedger();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const [draft, setDraft] = useState<Draft>(() => getDraft(entry));
+  const [draft, setDraft] = useState<Draft>(() => getDraft(entry, initialDate));
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     if (visible) {
-      setDraft(getDraft(entry));
+      setDraft(getDraft(entry, initialDate));
       setError('');
       setConfirmDelete(false);
     }
-  }, [entry, visible]);
+  }, [entry, initialDate, visible]);
 
   function updateDraft<Key extends keyof Draft>(key: Key, value: Draft[Key]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -137,7 +140,7 @@ export function EntryEditor({
                 {entry ? '编辑这笔流水' : '记下一笔'}
               </Text>
               <Text selectable style={styles.subtitle}>
-                今天 · 轻点保存后，首页会立即更新
+                {formatEntryDate(draft.date)} · 轻点保存后，账本会立即更新
               </Text>
             </View>
             <Pressable

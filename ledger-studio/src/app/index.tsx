@@ -345,6 +345,7 @@ export default function HomeScreen() {
 
       <EntryEditor
         entry={editingEntry}
+        initialDate={todayKey}
         onDelete={handleDelete}
         onDismiss={() => setEditorVisible(false)}
         onSave={handleSave}

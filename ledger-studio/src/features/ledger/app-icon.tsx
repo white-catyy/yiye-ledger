@@ -12,6 +12,12 @@ export type AppIconName =
   | 'trend'
   | 'check'
   | 'close'
+  | 'settings'
+  | 'download'
+  | 'upload'
+  | 'calendar'
+  | 'chevron-down'
+  | 'chevron-up'
   | 'chevron-right'
   | 'document';
 
@@ -25,6 +31,12 @@ const SF_NAMES = {
   trend: 'chart.line.uptrend.xyaxis',
   check: 'checkmark',
   close: 'xmark',
+  settings: 'gearshape',
+  download: 'square.and.arrow.down',
+  upload: 'square.and.arrow.up',
+  calendar: 'calendar',
+  'chevron-down': 'chevron.down',
+  'chevron-up': 'chevron.up',
   'chevron-right': 'chevron.right',
   document: 'doc.text',
 } as const;
@@ -42,6 +54,12 @@ const MATERIAL_NAMES: Record<
   trend: 'timeline',
   check: 'check',
   close: 'close',
+  settings: 'settings',
+  download: 'download',
+  upload: 'upload',
+  calendar: 'calendar-month',
+  'chevron-down': 'keyboard-arrow-down',
+  'chevron-up': 'keyboard-arrow-up',
   'chevron-right': 'chevron-right',
   document: 'receipt-long',
 };

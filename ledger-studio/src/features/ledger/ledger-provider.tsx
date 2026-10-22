@@ -23,6 +23,7 @@ type LedgerContextValue = {
   upsertEntry: (entry: LedgerEntry) => void;
   removeEntry: (id: string) => void;
   resetLedger: () => void;
+  replaceLedger: (ledger: LedgerState) => void;
   setMonthlyBudget: (amount: number) => void;
   setThemeColor: (color: string) => void;
 };
@@ -61,6 +62,13 @@ export function LedgerProvider({ children }: PropsWithChildren) {
     });
   }, []);
 
+  const replaceLedger = useCallback((next: LedgerState) => {
+    setLedger({
+      ...next,
+      entries: sortEntries(next.entries.map((entry) => ({ ...entry }))),
+    });
+  }, []);
+
   const setMonthlyBudget = useCallback((amount: number) => {
     setLedger((current) => ({
       ...current,
@@ -88,6 +96,7 @@ export function LedgerProvider({ children }: PropsWithChildren) {
       upsertEntry,
       removeEntry,
       resetLedger,
+      replaceLedger,
       setMonthlyBudget,
       setThemeColor,
     }),
@@ -96,6 +105,7 @@ export function LedgerProvider({ children }: PropsWithChildren) {
       ledger,
       removeEntry,
       resetLedger,
+      replaceLedger,
       setMonthlyBudget,
       setThemeColor,
       upsertEntry,
