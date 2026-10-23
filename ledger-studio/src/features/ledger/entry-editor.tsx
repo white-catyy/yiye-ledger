@@ -16,7 +16,7 @@ import { AppIcon } from './app-icon';
 import { CategoryIcon } from './category-icon';
 import { useLedger } from './ledger-provider';
 import {
-  CATEGORIES,
+  LEGACY_OTHER_CATEGORY,
   createEntryId,
   formatEntryDate,
   getDateKey,
@@ -25,10 +25,13 @@ import {
   normalizeAmountInput,
   normalizeTimeInput,
   type CategoryId,
+  type CategoryDefinition,
+  type EntryType,
   type LedgerEntry,
 } from './model';
 
 type Draft = {
+  type: EntryType;
   categoryId: CategoryId;
   name: string;
   note: string;
@@ -46,9 +49,16 @@ type EntryEditorProps = {
   onDelete: (id: string) => void;
 };
 
-function getDraft(entry: LedgerEntry | null, initialDate?: string): Draft {
+function getDraft(
+  entry: LedgerEntry | null,
+  initialDate: string | undefined,
+  categoriesByType: Record<EntryType, CategoryDefinition[]>
+): Draft {
+  const type = entry?.type ?? 'expense';
   return {
-    categoryId: entry?.categoryId ?? 'meal',
+    type,
+    categoryId:
+      entry?.categoryId ?? (categoriesByType[type][0].id as CategoryId),
     name: entry?.name ?? '',
     note: entry?.note ?? '',
     amount: entry ? String(entry.amount) : '',
@@ -65,19 +75,36 @@ export function EntryEditor({
   onSave,
   onDelete,
 }: EntryEditorProps) {
-  const { colors } = useLedger();
+  const { categoriesById, categoriesByType, colors } = useLedger();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const [draft, setDraft] = useState<Draft>(() => getDraft(entry, initialDate));
+  const [draft, setDraft] = useState<Draft>(() =>
+    getDraft(entry, initialDate, categoriesByType)
+  );
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     if (visible) {
-      setDraft(getDraft(entry, initialDate));
+      setDraft(getDraft(entry, initialDate, categoriesByType));
       setError('');
       setConfirmDelete(false);
     }
-  }, [entry, initialDate, visible]);
+  }, [categoriesByType, entry, initialDate, visible]);
+
+  const currentCategory =
+    categoriesById[draft.categoryId] ??
+    (draft.categoryId === 'other' ? LEGACY_OTHER_CATEGORY : null);
+  const categoryOptions = useMemo(() => {
+    const categories = categoriesByType[draft.type];
+    if (
+      currentCategory &&
+      currentCategory.type === draft.type &&
+      !categories.some((category) => category.id === currentCategory.id)
+    ) {
+      return [currentCategory, ...categories];
+    }
+    return categories;
+  }, [categoriesByType, currentCategory, draft.type]);
 
   function updateDraft<Key extends keyof Draft>(key: Key, value: Draft[Key]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -101,6 +128,7 @@ export function EntryEditor({
 
     onSave({
       id: entry?.id ?? createEntryId(),
+      type: draft.type,
       categoryId: draft.categoryId,
       name: draft.name.trim(),
       note: draft.note.trim(),
@@ -169,9 +197,48 @@ export function EntryEditor({
             />
           </View>
 
+          <Text style={styles.sectionLabel}>流水类型</Text>
+          <View style={styles.typeSelector}>
+            {(['expense', 'income'] as const).map((type) => {
+              const active = draft.type === type;
+              return (
+                <Pressable
+                  accessibilityLabel={`选择${type === 'income' ? '收入' : '支出'}类型`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  key={type}
+                  onPress={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      type,
+                      categoryId: categoriesByType[type][0].id as CategoryId,
+                    }))
+                  }
+                  style={({ pressed }) => [
+                    styles.typeOption,
+                    active && styles.typeOptionActive,
+                    pressed && styles.pressed,
+                  ]}>
+                  <AppIcon
+                    name={type === 'income' ? 'trend' : 'wallet'}
+                    size={18}
+                    color={active ? colors.ink : colors.inkSoft}
+                  />
+                  <Text
+                    style={[
+                      styles.typeOptionText,
+                      active && styles.typeOptionTextActive,
+                    ]}>
+                    {type === 'income' ? '收入' : '支出'}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
           <Text style={styles.sectionLabel}>分类</Text>
           <View style={styles.categoryGrid}>
-            {CATEGORIES.map((category) => {
+            {categoryOptions.map((category) => {
               const active = category.id === draft.categoryId;
               return (
                 <Pressable
@@ -179,7 +246,9 @@ export function EntryEditor({
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                   key={category.id}
-                  onPress={() => updateDraft('categoryId', category.id)}
+                  onPress={() =>
+                    updateDraft('categoryId', category.id as CategoryId)
+                  }
                   style={({ pressed }) => [
                     styles.categoryOption,
                     active && styles.categoryOptionActive,
@@ -187,7 +256,7 @@ export function EntryEditor({
                   ]}>
                   <View style={[styles.categoryBubble, { backgroundColor: category.tint }]}>
                     <CategoryIcon
-                      categoryId={category.id}
+                      category={category}
                       color={active ? colors.ink : category.ink}
                       size={20}
                     />
@@ -199,6 +268,9 @@ export function EntryEditor({
               );
             })}
           </View>
+          <Text style={styles.categoryHint}>
+            {'自定义分类可在“我的 > 设置”中添加和管理'}
+          </Text>
 
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>名称</Text>
@@ -214,29 +286,18 @@ export function EntryEditor({
             />
           </View>
 
-          <View style={styles.fieldRow}>
-            <View style={[styles.fieldGroup, styles.halfField]}>
-              <Text style={styles.fieldLabel}>时间</Text>
-              <TextInput
-                accessibilityLabel="流水时间"
-                keyboardType="number-pad"
-                maxLength={5}
-                onChangeText={(value) => updateDraft('time', normalizeTimeInput(value))}
-                placeholder="08:30"
-                placeholderTextColor={colors.muted}
-                style={[styles.textInput, styles.numberInput]}
-                value={draft.time}
-              />
-            </View>
-            <View style={[styles.fieldGroup, styles.halfField]}>
-              <Text style={styles.fieldLabel}>类型</Text>
-              <View style={styles.typeBadge}>
-                <AppIcon name="wallet" size={16} color={colors.inkSoft} />
-                <Text selectable style={styles.typeText}>
-                  支出
-                </Text>
-              </View>
-            </View>
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>时间</Text>
+            <TextInput
+              accessibilityLabel="流水时间"
+              keyboardType="number-pad"
+              maxLength={5}
+              onChangeText={(value) => updateDraft('time', normalizeTimeInput(value))}
+              placeholder="08:30"
+              placeholderTextColor={colors.muted}
+              style={[styles.textInput, styles.numberInput]}
+              value={draft.time}
+            />
           </View>
 
           <View style={styles.fieldGroup}>
@@ -245,7 +306,11 @@ export function EntryEditor({
               accessibilityLabel="流水备注"
               maxLength={60}
               onChangeText={(value) => updateDraft('note', value)}
-              placeholder="写一句关于这笔消费的话"
+              placeholder={
+                draft.type === 'income'
+                  ? '写一句关于这笔收入的说明'
+                  : '写一句关于这笔消费的话'
+              }
               placeholderTextColor={colors.muted}
               returnKeyType="done"
               style={styles.textInput}
@@ -381,6 +446,35 @@ function createStyles(colors: LedgerPalette) {
     fontSize: 12,
     fontWeight: '700',
   },
+  typeSelector: {
+    flexDirection: 'row',
+    gap: 9,
+  },
+  typeOption: {
+    minHeight: 48,
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 15,
+    backgroundColor: colors.input,
+  },
+  typeOptionActive: {
+    borderColor: colors.skyDeep,
+    backgroundColor: colors.frost,
+  },
+  typeOptionText: {
+    color: colors.inkSoft,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  typeOptionTextActive: {
+    color: colors.ink,
+    fontWeight: '800',
+  },
   categoryGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -418,15 +512,13 @@ function createStyles(colors: LedgerPalette) {
     color: colors.ink,
     fontWeight: '800',
   },
+  categoryHint: {
+    color: colors.muted,
+    fontSize: 10,
+    lineHeight: 15,
+  },
   fieldGroup: {
     gap: 7,
-  },
-  fieldRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  halfField: {
-    flex: 1,
   },
   fieldLabel: {
     color: colors.inkSoft,
@@ -446,22 +538,6 @@ function createStyles(colors: LedgerPalette) {
   },
   numberInput: {
     fontVariant: ['tabular-nums'],
-  },
-  typeBadge: {
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 15,
-    backgroundColor: colors.input,
-    paddingHorizontal: 14,
-  },
-  typeText: {
-    color: colors.ink,
-    fontSize: 15,
-    fontWeight: '600',
   },
   error: {
     color: colors.danger,

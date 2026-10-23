@@ -6,10 +6,16 @@ import type { LedgerPalette } from '@/constants/theme';
 import { AppIcon } from './app-icon';
 import { CategoryIcon } from './category-icon';
 import { useLedger } from './ledger-provider';
-import { CATEGORY_BY_ID, formatMoney, type CategoryId } from './model';
+import {
+  formatMoney,
+  LEGACY_OTHER_CATEGORY,
+  type CategoryId,
+  type EntryType,
+} from './model';
 
 type LedgerEntryRowProps = {
   id: string;
+  entryType: EntryType;
   categoryId: CategoryId;
   name: string;
   note: string;
@@ -21,6 +27,7 @@ type LedgerEntryRowProps = {
 
 export const LedgerEntryRow = memo(function LedgerEntryRow({
   id,
+  entryType,
   categoryId,
   name,
   note,
@@ -29,15 +36,15 @@ export const LedgerEntryRow = memo(function LedgerEntryRow({
   isLast,
   onEdit,
 }: LedgerEntryRowProps) {
-  const { colors } = useLedger();
+  const { categoriesById, colors } = useLedger();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const category = CATEGORY_BY_ID[categoryId] ?? CATEGORY_BY_ID.other;
+  const category = categoriesById[categoryId] ?? LEGACY_OTHER_CATEGORY;
   const handlePress = useCallback(() => onEdit(id), [id, onEdit]);
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityHint="轻点编辑这笔流水的名称、分类、金额、时间或备注"
+      accessibilityHint={`轻点编辑这笔${entryType === 'income' ? '收入' : '支出'}的名称、分类、金额、时间或备注`}
       onPress={handlePress}
       style={({ pressed }) => [
         styles.row,
@@ -48,7 +55,7 @@ export const LedgerEntryRow = memo(function LedgerEntryRow({
       <View pointerEvents="none" style={styles.bindingHole} />
 
       <View style={[styles.categoryIcon, { backgroundColor: category.tint }]}>
-        <CategoryIcon categoryId={categoryId} color={category.ink} />
+        <CategoryIcon category={category} color={category.ink} />
       </View>
 
       <View style={styles.main}>
@@ -71,7 +78,7 @@ export const LedgerEntryRow = memo(function LedgerEntryRow({
         numberOfLines={1}
         selectable
         style={styles.amount}>
-        −¥{formatMoney(amount)}
+        {entryType === 'income' ? '+' : '−'}¥{formatMoney(amount)}
       </Text>
       <AppIcon name="chevron-right" size={15} color={colors.muted} />
     </Pressable>

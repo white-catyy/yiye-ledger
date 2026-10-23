@@ -3,16 +3,15 @@ import { SymbolView } from 'expo-symbols';
 import type { ComponentProps } from 'react';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
-import { CATEGORY_BY_ID, type CategoryId } from './model';
+import type { CategoryDefinition } from './model';
 
 type CategoryIconProps = {
-  categoryId: CategoryId;
+  category: CategoryDefinition;
   size?: number;
   color?: string;
 };
 
-export function CategoryIcon({ categoryId, size = 21, color }: CategoryIconProps) {
-  const category = CATEGORY_BY_ID[categoryId] ?? CATEGORY_BY_ID.other;
+export function CategoryIcon({ category, size = 21, color }: CategoryIconProps) {
   const iconColor = color ?? category.ink;
 
   if (process.env.EXPO_OS === 'ios') {

@@ -22,7 +22,7 @@ import {
   getDateKey,
   getYesterdayKey,
   isSameMonth,
-  sumEntries,
+  summarizeEntries,
   type LedgerEntry,
 } from '@/features/ledger/model';
 
@@ -30,7 +30,8 @@ type HomeStyles = ReturnType<typeof createHomeStyles>;
 
 type HomeHeaderProps = {
   dateLabel: string;
-  total: number;
+  expense: number;
+  income: number;
   count: number;
   comparison: number;
   colors: LedgerPalette;
@@ -39,7 +40,8 @@ type HomeHeaderProps = {
 
 const HomeHeader = memo(function HomeHeader({
   dateLabel,
-  total,
+  expense,
+  income,
   count,
   comparison,
   colors,
@@ -85,7 +87,7 @@ const HomeHeader = memo(function HomeHeader({
             numberOfLines={1}
             selectable
             style={styles.amount}>
-            {formatMoney(total)}
+            {formatMoney(expense)}
           </Text>
           <View pointerEvents="none" style={styles.highlighter} />
         </View>
@@ -100,6 +102,12 @@ const HomeHeader = memo(function HomeHeader({
             <AppIcon name="trend" size={13} color={colors.ink} />
             <Text selectable style={styles.metaText}>
               {comparisonText}
+            </Text>
+          </View>
+          <View style={[styles.metaBadge, styles.metaIncome]}>
+            <AppIcon name="wallet" size={13} color={colors.ink} />
+            <Text selectable style={styles.metaText}>
+              收入 +¥{formatMoney(income)}
             </Text>
           </View>
         </View>
@@ -224,17 +232,22 @@ export default function HomeScreen() {
     () => ledger.entries.filter((entry) => entry.date === todayKey),
     [ledger.entries, todayKey]
   );
-  const total = useMemo(() => sumEntries(todayEntries), [todayEntries]);
+  const todaySummary = useMemo(
+    () => summarizeEntries(todayEntries),
+    [todayEntries]
+  );
   const yesterdayTotal = useMemo(() => {
-    const calculated = sumEntries(
+    const calculated = summarizeEntries(
       ledger.entries.filter((entry) => entry.date === getYesterdayKey())
-    );
+    ).expense;
     return calculated || ledger.yesterdayTotal;
   }, [ledger.entries, ledger.yesterdayTotal]);
   const monthlySpent =
     ledger.monthlySpentBeforeToday +
-    sumEntries(ledger.entries.filter((entry) => isSameMonth(entry.date)));
-  const comparison = yesterdayTotal - total;
+    summarizeEntries(
+      ledger.entries.filter((entry) => isSameMonth(entry.date))
+    ).expense;
+  const comparison = yesterdayTotal - todaySummary.expense;
   const listContentStyle = useMemo(
     () => [
       styles.listContent,
@@ -281,6 +294,7 @@ export default function HomeScreen() {
       <LedgerEntryRow
         amount={item.amount}
         categoryId={item.categoryId}
+        entryType={item.type}
         id={item.id}
         isLast={index === todayEntries.length - 1}
         name={item.name}
@@ -320,8 +334,9 @@ export default function HomeScreen() {
             colors={colors}
             count={todayEntries.length}
             dateLabel={dateLabel}
+            expense={todaySummary.expense}
+            income={todaySummary.income}
             styles={styles}
-            total={total}
           />
         }
         removeClippedSubviews
@@ -331,7 +346,7 @@ export default function HomeScreen() {
       />
 
       <Pressable
-        accessibilityHint="打开表单，新增一笔今日支出"
+        accessibilityHint="打开表单，新增一笔今日流水"
         accessibilityLabel="记一笔"
         accessibilityRole="button"
         android_ripple={{ color: '#BFE7F7' }}
@@ -510,8 +525,9 @@ function createHomeStyles(colors: LedgerPalette) {
     transform: [{ rotate: '-1deg' }],
   },
   metaRow: {
-    height: 36,
+    minHeight: 36,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 8,
   },
@@ -526,6 +542,9 @@ function createHomeStyles(colors: LedgerPalette) {
   },
   metaGood: {
     backgroundColor: 'rgba(205, 234, 248, 0.72)',
+  },
+  metaIncome: {
+    backgroundColor: 'rgba(218, 241, 228, 0.78)',
   },
   metaText: {
     color: ledgerColors.ink,

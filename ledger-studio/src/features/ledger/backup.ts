@@ -2,10 +2,13 @@ import { normalizeThemeColor } from '@/constants/theme';
 
 import {
   CATEGORY_BY_ID,
+  CUSTOM_CATEGORY_LIMIT,
   getDateKey,
+  isEntryType,
   isValidTime,
+  sanitizeCustomCategories,
   sortEntries,
-  type CategoryId,
+  type CustomCategory,
   type LedgerEntry,
   type LedgerState,
 } from './model';
@@ -14,11 +17,20 @@ export type LedgerBackupV1 = {
   format: 'yiye-ledger-backup';
   version: 1;
   exportedAt: string;
+  data: Omit<LedgerState, 'customCategories' | 'entries'> & {
+    entries: Array<Omit<LedgerEntry, 'type'>>;
+  };
+};
+
+export type LedgerBackup = {
+  format: 'yiye-ledger-backup';
+  version: 2;
+  exportedAt: string;
   data: LedgerState;
 };
 
 export type BackupParseResult =
-  | { ok: true; backup: LedgerBackupV1 }
+  | { ok: true; backup: LedgerBackup }
   | { ok: false; error: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -45,14 +57,49 @@ function isValidDateKey(value: string) {
   );
 }
 
-export function createLedgerBackup(ledger: LedgerState): LedgerBackupV1 {
+function parseCustomCategories(value: unknown) {
+  if (!Array.isArray(value)) {
+    return { ok: false as const, error: '备份缺少自定义分类数据' };
+  }
+  const categories = sanitizeCustomCategories(value);
+  if (
+    categories.length !== value.length ||
+    categories.length > CUSTOM_CATEGORY_LIMIT
+  ) {
+    return { ok: false as const, error: '备份中的自定义分类内容无效' };
+  }
+
+  const names = new Set<string>();
+  for (const category of categories) {
+    const key = `${category.type}:${category.name.toLocaleLowerCase()}`;
+    if (names.has(key)) {
+      return { ok: false as const, error: '备份中存在同类型重名分类' };
+    }
+    names.add(key);
+    const builtinDuplicate = Object.values(CATEGORY_BY_ID).some(
+      (builtin) =>
+        builtin.id !== 'other' &&
+        builtin.type === category.type &&
+        builtin.label.toLocaleLowerCase() === category.name.toLocaleLowerCase()
+    );
+    if (builtinDuplicate) {
+      return { ok: false as const, error: '备份中的自定义分类与内置分类重名' };
+    }
+  }
+  return { ok: true as const, categories };
+}
+
+export function createLedgerBackup(ledger: LedgerState): LedgerBackup {
   return {
     format: 'yiye-ledger-backup',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     data: {
       ...ledger,
       entries: ledger.entries.map((entry) => ({ ...entry })),
+      customCategories: ledger.customCategories.map((category) => ({
+        ...category,
+      })),
     },
   };
 }
@@ -76,7 +123,7 @@ export function parseLedgerBackup(content: string): BackupParseResult {
   if (!isRecord(parsed) || parsed.format !== 'yiye-ledger-backup') {
     return { ok: false, error: '这不是一页账备份文件' };
   }
-  if (parsed.version !== 1) {
+  if (parsed.version !== 1 && parsed.version !== 2) {
     return { ok: false, error: '备份版本不受支持，请更新 App 后重试' };
   }
   if (typeof parsed.exportedAt !== 'string' || Number.isNaN(Date.parse(parsed.exportedAt))) {
@@ -86,6 +133,7 @@ export function parseLedgerBackup(content: string): BackupParseResult {
     return { ok: false, error: '备份缺少账本数据' };
   }
 
+  const version = parsed.version;
   const data = parsed.data;
   if (
     !Array.isArray(data.entries) ||
@@ -101,39 +149,56 @@ export function parseLedgerBackup(content: string): BackupParseResult {
     return { ok: false, error: '备份中的主题颜色无效' };
   }
 
-  const ids = new Set<string>();
-  const today = getDateKey();
+  const customCategoryResult =
+    version === 1
+      ? { ok: true as const, categories: [] as CustomCategory[] }
+      : parseCustomCategories(data.customCategories);
+  if (!customCategoryResult.ok) {
+    return customCategoryResult;
+  }
+
+  const customCategoryById = new Map<string, CustomCategory>(
+    customCategoryResult.categories.map((category) => [category.id, category])
+  );
+  const entryIds = new Set<string>();
   const entries: LedgerEntry[] = [];
   for (const candidate of data.entries) {
     if (!isRecord(candidate)) {
       return { ok: false, error: '备份包含无效的流水记录' };
     }
 
-    const categoryId = String(candidate.categoryId ?? '') as CategoryId;
+    const entryType = version === 1 ? 'expense' : candidate.type;
+    const categoryId =
+      typeof candidate.categoryId === 'string' ? candidate.categoryId : '';
+    const category =
+      CATEGORY_BY_ID[categoryId] ?? customCategoryById.get(categoryId);
     const amount = candidate.amount;
     const date = String(candidate.date ?? '');
     if (
       typeof candidate.id !== 'string' ||
       !candidate.id ||
-      ids.has(candidate.id) ||
+      entryIds.has(candidate.id) ||
       typeof candidate.name !== 'string' ||
       !candidate.name.trim() ||
       typeof candidate.note !== 'string' ||
-      !CATEGORY_BY_ID[categoryId] ||
+      !isEntryType(entryType) ||
+      !category ||
+      category.type !== entryType ||
       !isNonNegativeNumber(amount) ||
       amount <= 0 ||
       typeof candidate.time !== 'string' ||
       !isValidTime(candidate.time) ||
       !isValidDateKey(date) ||
-      date > today
+      date > getDateKey()
     ) {
       return { ok: false, error: '备份中的流水内容无效或包含未来日期' };
     }
 
-    ids.add(candidate.id);
+    entryIds.add(candidate.id);
     entries.push({
       id: candidate.id,
-      categoryId,
+      type: entryType,
+      categoryId: categoryId as LedgerEntry['categoryId'],
       name: candidate.name.trim(),
       note: candidate.note,
       amount,
@@ -146,10 +211,11 @@ export function parseLedgerBackup(content: string): BackupParseResult {
     ok: true,
     backup: {
       format: 'yiye-ledger-backup',
-      version: 1,
+      version: 2,
       exportedAt: parsed.exportedAt,
       data: {
         entries: sortEntries(entries),
+        customCategories: customCategoryResult.categories,
         monthlyBudget: data.monthlyBudget,
         monthlySpentBeforeToday: data.monthlySpentBeforeToday,
         yesterdayTotal: data.yesterdayTotal,

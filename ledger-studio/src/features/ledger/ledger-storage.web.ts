@@ -1,6 +1,13 @@
 import { normalizeThemeColor } from '@/constants/theme';
 
-import { getDateKey, INITIAL_LEDGER, type LedgerEntry, type LedgerState } from './model';
+import {
+  getDateKey,
+  INITIAL_LEDGER,
+  sanitizeCustomCategories,
+  type CategoryId,
+  type LedgerEntry,
+  type LedgerState,
+} from './model';
 
 const STORAGE_KEY = 'yiye-ledger-v1';
 
@@ -24,10 +31,19 @@ function parseStoredLedger(value: string | null): LedgerState | null {
     const isLegacy = !parsed.themeColor || parsed.entries?.some((entry) => !entry.date);
     const entries = (parsed.entries ?? [])
       .filter((entry) => !entry.id?.startsWith('sample-'))
-      .map((entry) => ({ ...entry, date: entry.date ?? getDateKey() })) as LedgerEntry[];
+      .map(
+        (entry) =>
+          ({
+            ...entry,
+            type: entry.type === 'income' ? 'income' : 'expense',
+            categoryId: (entry.categoryId ?? 'other') as CategoryId,
+            date: entry.date ?? getDateKey(),
+          }) as LedgerEntry
+      );
 
     return {
       entries,
+      customCategories: sanitizeCustomCategories(parsed.customCategories),
       monthlyBudget: isLegacy ? 0 : parsed.monthlyBudget,
       monthlySpentBeforeToday: isLegacy ? 0 : parsed.monthlySpentBeforeToday,
       yesterdayTotal: isLegacy ? 0 : parsed.yesterdayTotal,

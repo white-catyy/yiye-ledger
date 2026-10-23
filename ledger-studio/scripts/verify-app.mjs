@@ -307,6 +307,42 @@ async function main() {
     }
     await click('打开设置');
     await waitForText('选择一个预设色');
+
+    await clickAriaExact('新增自定义分类');
+    await waitForText('新增自定义分类');
+    await fill('分类名称', '社团');
+    await clickAriaExact('使用宠物图标');
+    await clickAriaExact('选择颜色#C47A8A');
+    await clickAriaExact('保存自定义分类');
+    await waitForText('社团');
+
+    await clickAriaExact('新增自定义分类');
+    await clickAriaExact('分类类型设为收入');
+    await fill('分类名称', '稿费');
+    await clickAriaExact('使用工作图标');
+    await clickAriaExact('选择颜色#8B7BC1');
+    await clickAriaExact('保存自定义分类');
+    await waitForText('稿费');
+
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (
+      storedState.customCategories?.length !== 2 ||
+      storedState.customCategories[0]?.type !== 'expense' ||
+      storedState.customCategories[1]?.type !== 'income'
+    ) {
+      throw new Error('Custom categories were not persisted with their types.');
+    }
+
+    await clickAriaExact('新增自定义分类');
+    await fill('分类名称', '社团');
+    await clickAriaExact('保存自定义分类');
+    await waitForText('同类型中已有同名分类');
+    await clickAriaExact('关闭分类编辑');
+    await delay(350);
+    await screenshot('preview-categories.png');
+
     await typeInto('每月预算', '2000');
     const budgetFieldValue = await evaluate(
       `document.querySelector('input[aria-label="每月预算"]')?.value`
@@ -337,8 +373,28 @@ async function main() {
     if (storedState.themeColor !== '#8B7BC1') {
       throw new Error('Custom theme color was not persisted.');
     }
+    await evaluate(`(() => {
+      const original = URL.createObjectURL;
+      window.__yiyeBackupBlob = null;
+      URL.createObjectURL = function (blob) {
+        window.__yiyeBackupBlob = blob;
+        return original.call(URL, blob);
+      };
+      return true;
+    })()`);
     await click('导出备份');
     await waitForText('已生成备份');
+    const exportedContent = await evaluate(
+      `window.__yiyeBackupBlob ? window.__yiyeBackupBlob.text() : null`
+    );
+    const exportedBackup = JSON.parse(exportedContent);
+    if (
+      exportedBackup.version !== 2 ||
+      exportedBackup.data?.customCategories?.length !== 2 ||
+      exportedBackup.data?.entries?.some((entry) => entry.type !== 'expense')
+    ) {
+      throw new Error('Export did not contain the V2 category and entry schema.');
+    }
 
     await evaluate(`(() => {
       const original = HTMLInputElement.prototype.click;
@@ -356,7 +412,7 @@ async function main() {
       `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(
         value.getDate()
       ).padStart(2, '0')}`;
-    const importedBackup = {
+    const importedV1 = {
       format: 'yiye-ledger-backup',
       version: 1,
       exportedAt: new Date().toISOString(),
@@ -388,7 +444,7 @@ async function main() {
       },
     };
     await click('导入备份');
-    await injectFile(JSON.stringify(importedBackup));
+    await injectFile(JSON.stringify(importedV1));
     await waitForText('确认替换当前账本');
     await click('确认替换');
     storedState = await evaluate(
@@ -397,9 +453,108 @@ async function main() {
     if (
       storedState.entries?.length !== 2 ||
       storedState.monthlyBudget !== 1800 ||
-      storedState.themeColor !== '#5B9A7B'
+      storedState.themeColor !== '#5B9A7B' ||
+      storedState.customCategories?.length !== 0 ||
+      storedState.entries.some((entry) => entry.type !== 'expense')
     ) {
-      throw new Error('Valid backup did not replace the ledger.');
+      throw new Error('V1 backup migration did not preserve and upgrade the ledger.');
+    }
+
+    const importedBackup = {
+      format: 'yiye-ledger-backup',
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      data: {
+        monthlyBudget: 1800,
+        monthlySpentBeforeToday: 0,
+        yesterdayTotal: 0,
+        themeColor: '#5B9A7B',
+        customCategories: [
+          {
+            id: 'custom-club',
+            type: 'expense',
+            name: '社团',
+            icon: 'pet',
+            color: '#C47A8A',
+          },
+          {
+            id: 'custom-writing',
+            type: 'income',
+            name: '稿费',
+            icon: 'work',
+            color: '#8B7BC1',
+          },
+        ],
+        entries: [
+          {
+            id: 'backup-yesterday',
+            type: 'expense',
+            categoryId: 'custom-club',
+            name: '备份昨天',
+            note: '迁移数据',
+            amount: 12,
+            time: '12:00',
+            date: dateKey(yesterday),
+          },
+          {
+            id: 'backup-today',
+            type: 'income',
+            categoryId: 'salary',
+            name: '备份今天',
+            note: '收入导入测试',
+            amount: 36,
+            time: '18:00',
+            date: dateKey(today),
+          },
+        ],
+      },
+    };
+
+    await click('导入备份');
+    await injectFile(JSON.stringify(importedBackup));
+    await waitForText('确认替换当前账本');
+    await click('确认替换');
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (
+      storedState.entries?.length !== 2 ||
+      storedState.customCategories?.length !== 2 ||
+      storedState.entries[0]?.type !== 'expense' ||
+      storedState.entries[1]?.type !== 'income'
+    ) {
+      throw new Error('V2 backup did not restore categories and income.');
+    }
+
+    await clickAriaExact('删除社团分类');
+    await clickAriaExact('确认删除社团分类');
+    await waitForText('正被 1 笔流水使用');
+
+    await clickAriaExact('编辑稿费分类');
+    await waitForText('编辑自定义分类');
+    await fill('分类名称', '写作');
+    await clickAriaExact('选择颜色#6B79B8');
+    await clickAriaExact('保存自定义分类');
+    await waitForText('写作');
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (
+      storedState.customCategories?.find(
+        (category) => category.id === 'custom-writing'
+      )?.name !== '写作'
+    ) {
+      throw new Error('Editing a custom category was not persisted.');
+    }
+
+    await clickAriaExact('删除写作分类');
+    await clickAriaExact('确认删除写作分类');
+    await waitForText('自定义分类已删除');
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (storedState.customCategories?.length !== 1) {
+      throw new Error('Unused custom category was not deleted.');
     }
 
     await click('导入备份');
@@ -413,12 +568,51 @@ async function main() {
     }
 
     await click('导入备份');
-    await injectFile(JSON.stringify({ ...importedBackup, version: 2 }));
+    await injectFile(JSON.stringify({ ...importedBackup, version: 3 }));
     await waitForText('备份版本不受支持');
 
+    const { customCategories: omittedCategories, ...dataWithoutCategories } =
+      importedBackup.data;
     await click('导入备份');
-    await injectFile(JSON.stringify({ ...importedBackup, data: { entries: [] } }));
-    await waitForText('备份中的预算或汇总数据不完整');
+    await injectFile(
+      JSON.stringify({ ...importedBackup, data: dataWithoutCategories })
+    );
+    await waitForText('备份缺少自定义分类数据');
+
+    await click('导入备份');
+    await injectFile(
+      JSON.stringify({
+        ...importedBackup,
+        data: {
+          ...importedBackup.data,
+          entries: [
+            {
+              ...importedBackup.data.entries[0],
+              type: 'transfer',
+            },
+          ],
+        },
+      })
+    );
+    await waitForText('备份中的流水内容无效或包含未来日期');
+
+    await click('导入备份');
+    await injectFile(
+      JSON.stringify({
+        ...importedBackup,
+        data: {
+          ...importedBackup.data,
+          entries: [
+            {
+              ...importedBackup.data.entries[0],
+              id: 'unknown-category-entry',
+              categoryId: 'custom-missing',
+            },
+          ],
+        },
+      })
+    );
+    await waitForText('备份中的流水内容无效或包含未来日期');
 
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -463,6 +657,7 @@ async function main() {
     );
     if (
       afterInvalidImport.entries?.length !== 2 ||
+      afterInvalidImport.customCategories?.length !== 1 ||
       afterInvalidImport.monthlyBudget !== 1800 ||
       afterInvalidImport.themeColor !== '#5B9A7B'
     ) {
@@ -481,10 +676,90 @@ async function main() {
       `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
     );
     const importedToday = storedState.entries?.find((entry) => entry.id === 'backup-today');
-    if (importedToday?.amount !== 40 || importedToday?.date !== dateKey(today)) {
+    if (
+      importedToday?.amount !== 40 ||
+      importedToday?.date !== dateKey(today) ||
+      importedToday?.type !== 'income'
+    ) {
       throw new Error('Home entry editing failed.');
     }
 
+    await click('我的');
+    const settingsAfterEditText = await waitForText('预算、设置和本地数据');
+    if (!settingsAfterEditText.includes('自定义分类')) {
+      await click('打开设置');
+      await waitForText('自定义分类');
+    }
+
+    const categoryIcons = [
+      'food',
+      'coffee',
+      'transport',
+      'shopping',
+      'study',
+      'entertainment',
+      'home',
+      'pet',
+      'travel',
+      'fitness',
+      'health',
+      'gift',
+      'work',
+      'education',
+      'game',
+      'camera',
+    ];
+    const categoryColors = [
+      '#397A99',
+      '#4B7F9D',
+      '#5B9A7B',
+      '#6A8F5D',
+      '#C9975A',
+      '#C47A8A',
+      '#8B7BC1',
+      '#6B79B8',
+    ];
+    const twentyCategories = Array.from({ length: 20 }, (_, index) => ({
+      id: `custom-limit-${index + 1}`,
+      type: index % 2 === 0 ? 'expense' : 'income',
+      name: `限额分类${String(index + 1).padStart(2, '0')}`,
+      icon: categoryIcons[index % categoryIcons.length],
+      color: categoryColors[index % categoryColors.length],
+    }));
+    const limitBackup = {
+      ...importedBackup,
+      exportedAt: new Date().toISOString(),
+      data: {
+        ...importedBackup.data,
+        customCategories: twentyCategories,
+        entries: [],
+      },
+    };
+    await click('导入备份');
+    await injectFile(JSON.stringify(limitBackup));
+    await waitForText('确认替换当前账本');
+    await click('确认替换');
+    await waitForText('20/20');
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (storedState.customCategories?.length !== 20) {
+      throw new Error('The 20-category backup was not accepted.');
+    }
+    const addCategoryDisabled = await evaluate(`(() => {
+      const button = document.querySelector('[aria-label="新增自定义分类"]');
+      return Boolean(
+        button &&
+        (button.getAttribute('aria-disabled') === 'true' ||
+          button.hasAttribute('disabled'))
+      );
+    })()`);
+    if (!addCategoryDisabled) {
+      throw new Error('The 21st custom category remained available.');
+    }
+
+    await click('首页');
+    await waitForText('今天还没有流水');
     await evaluate(`localStorage.removeItem('yiye-ledger-v1'); location.reload(); true`);
     await waitForText('今天还没有流水');
     await click('记一笔');
@@ -503,28 +778,67 @@ async function main() {
       throw new Error('Empty form validation did not run.');
     }
 
-    await fill('流水名称', '打印资料');
-    await fill('金额', '5.50');
+    await clickAriaExact('选择收入类型');
+    await fill('流水名称', '家教收入');
+    await fill('金额', '80.00');
     await fill('流水时间', '20:10');
-    await fill('流水备注', '论文终稿');
-    await click('饮品');
+    await fill('流水备注', '本周家教');
+    await click('兼职');
     await screenshot('preview-editor.png');
     await click('保存这笔');
 
-    const savedText = await waitForText('打印资料');
-    if (!savedText.includes('5.50') || !savedText.includes('1 笔流水')) {
-      throw new Error('New entry did not update the home ledger.');
+    const savedText = await waitForText('家教收入');
+    if (
+      !savedText.includes('+¥80.00') ||
+      !savedText.includes('收入 +¥80.00') ||
+      !savedText.includes('1 笔流水')
+    ) {
+      throw new Error('New income entry did not update the home ledger.');
     }
     storedState = await evaluate(
       `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
     );
-    if (storedState.entries?.length !== 1 || storedState.entries[0].categoryId !== 'drink') {
-      throw new Error('Category selection was not saved.');
+    if (
+      storedState.entries?.length !== 1 ||
+      storedState.entries[0].categoryId !== 'parttime' ||
+      storedState.entries[0].type !== 'income'
+    ) {
+      throw new Error('Income type or category selection was not saved.');
+    }
+
+    await click('我的');
+    await waitForText('预算、设置和本地数据');
+    await typeInto('每月预算', '100');
+    await clickAriaExact('保存每月预算');
+    await click('首页');
+    const incomeBudgetText = await waitForText('收入 +¥80.00');
+    if (!incomeBudgetText.includes('¥0.00 / ¥100.00')) {
+      throw new Error('Income was incorrectly counted against the budget.');
+    }
+    await screenshot('preview-income.png');
+
+    await click('家教收入');
+    await waitForText('编辑这笔流水');
+    await clickAriaExact('选择支出类型');
+    await click('饮品');
+    await click('保存这笔');
+    const convertedText = await waitForText('−¥80.00');
+    if (!convertedText.includes('¥80.00 / ¥100.00')) {
+      throw new Error('Expense conversion did not update the budget total.');
+    }
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (
+      storedState.entries[0].type !== 'expense' ||
+      storedState.entries[0].categoryId !== 'drink'
+    ) {
+      throw new Error('Changing the entry type did not reset to an expense category.');
     }
 
     await client.send('Page.reload');
-    await waitForText('打印资料');
-    await click('打印资料');
+    await waitForText('家教收入');
+    await click('家教收入');
     await fill('金额', '10.00');
     await click('学习');
     await click('保存这笔');
@@ -532,10 +846,19 @@ async function main() {
     if (!editedText.includes('10.00')) {
       throw new Error('Editing an existing entry did not update totals.');
     }
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (
+      storedState.entries[0].amount !== 10 ||
+      storedState.entries[0].categoryId !== 'study'
+    ) {
+      throw new Error('Edited expense details were not persisted.');
+    }
 
     await client.send('Page.reload');
     await waitForText('10.00');
-    await click('打印资料');
+    await click('家教收入');
     await click('删除');
     await waitForText('确定删除这笔流水');
     await click('确认删除');
@@ -555,9 +878,16 @@ async function main() {
           dailyCalendar: true,
           historyEntry: true,
           inlineSettings: true,
+          customCategoryManagement: true,
+          categoryDeleteProtection: true,
+          categoryLimit: true,
           dataTransfer: true,
+          backupV2: true,
+          legacyV1Migration: true,
           invalidImportProtected: true,
           homeEntryEdit: true,
+          incomeEntries: true,
+          incomeBudgetExclusion: true,
           closeButton: true,
           categorySelection: true,
           budgetSetting: true,

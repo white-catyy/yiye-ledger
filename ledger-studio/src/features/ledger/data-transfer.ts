@@ -6,14 +6,14 @@ import {
   getBackupFilename,
   parseLedgerBackup,
   serializeLedgerBackup,
-  type BackupParseResult,
+  type LedgerBackup,
 } from './backup';
 import type { LedgerState } from './model';
 
 export type ImportBackupResult =
   | { status: 'cancelled' }
   | { status: 'error'; message: string }
-  | { status: 'success'; backup: Extract<BackupParseResult, { ok: true }>['backup'] };
+  | { status: 'success'; backup: LedgerBackup };
 
 export async function exportLedgerData(ledger: LedgerState) {
   const filename = getBackupFilename();

@@ -11,7 +11,7 @@ import {
   formatEntryDate,
   formatMoney,
   getDateKey,
-  sumEntries,
+  summarizeEntries,
   type LedgerEntry,
 } from '@/features/ledger/model';
 import { MonthCalendar } from '@/features/ledger/month-calendar';
@@ -39,7 +39,10 @@ export default function DetailScreen() {
         .sort((left, right) => left.time.localeCompare(right.time)),
     [ledger.entries, selectedDate]
   );
-  const selectedTotal = useMemo(() => sumEntries(selectedEntries), [selectedEntries]);
+  const selectedSummary = useMemo(
+    () => summarizeEntries(selectedEntries),
+    [selectedEntries]
+  );
 
   const handleEdit = useCallback(
     (id: string) => {
@@ -105,11 +108,16 @@ export default function DetailScreen() {
                   {formatEntryDate(selectedDate)}
                 </Text>
                 <Text selectable style={styles.dayAmount}>
-                  ¥{formatMoney(selectedTotal)}
+                  支出 ¥{formatMoney(selectedSummary.expense)}
                 </Text>
-                <Text selectable style={styles.dayCount}>
-                  {selectedEntries.length} 笔流水
-                </Text>
+                <View style={styles.dayMeta}>
+                  <Text selectable style={styles.dayIncome}>
+                    收入 +¥{formatMoney(selectedSummary.income)}
+                  </Text>
+                  <Text selectable style={styles.dayCount}>
+                    {selectedEntries.length} 笔流水
+                  </Text>
+                </View>
               </View>
               <Pressable
                 accessibilityLabel={`补记${formatEntryDate(selectedDate)}的流水`}
@@ -134,6 +142,7 @@ export default function DetailScreen() {
           <LedgerEntryRow
             amount={item.amount}
             categoryId={item.categoryId}
+            entryType={item.type}
             id={item.id}
             isLast={index === selectedEntries.length - 1}
             name={item.name}
@@ -255,6 +264,17 @@ function createStyles(colors: LedgerPalette) {
       fontVariant: ['tabular-nums'],
       fontWeight: '800',
       letterSpacing: -0.8,
+    },
+    dayMeta: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    dayIncome: {
+      color: '#467C66',
+      fontSize: 10,
+      fontVariant: ['tabular-nums'],
+      fontWeight: '700',
     },
     dayCount: {
       color: colors.muted,

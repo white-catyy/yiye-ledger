@@ -16,14 +16,15 @@ import {
   type LedgerPalette,
 } from '@/constants/theme';
 import { AppIcon } from '@/features/ledger/app-icon';
-import type { LedgerBackupV1 } from '@/features/ledger/backup';
+import type { LedgerBackup } from '@/features/ledger/backup';
+import { CustomCategoryManager } from '@/features/ledger/custom-category-manager';
 import { exportLedgerData, importLedgerData } from '@/features/ledger/data-transfer';
 import { useLedger } from '@/features/ledger/ledger-provider';
 import {
   formatMoney,
   isSameMonth,
   normalizeAmountInput,
-  sumEntries,
+  summarizeEntries,
 } from '@/features/ledger/model';
 
 type TransferState = {
@@ -49,18 +50,20 @@ export default function ProfileScreen() {
   const [themeDraft, setThemeDraft] = useState(ledger.themeColor);
   const [themeError, setThemeError] = useState('');
   const [confirmReset, setConfirmReset] = useState(false);
-  const [pendingImport, setPendingImport] = useState<LedgerBackupV1 | null>(null);
+  const [pendingImport, setPendingImport] = useState<LedgerBackup | null>(null);
   const [transferBusy, setTransferBusy] = useState<'import' | 'export' | null>(null);
   const [transferState, setTransferState] = useState<TransferState>({
     tone: 'neutral',
     message: '',
   });
-  const monthSpent = useMemo(
+  const monthSummary = useMemo(
     () =>
-      ledger.monthlySpentBeforeToday +
-      sumEntries(ledger.entries.filter((entry) => isSameMonth(entry.date))),
-    [ledger.entries, ledger.monthlySpentBeforeToday]
+      summarizeEntries(
+        ledger.entries.filter((entry) => isSameMonth(entry.date))
+      ),
+    [ledger.entries]
   );
+  const monthSpent = ledger.monthlySpentBeforeToday + monthSummary.expense;
   const contentStyle = useMemo(
     () => [
       styles.content,
@@ -185,14 +188,22 @@ export default function ProfileScreen() {
           <AppIcon name="wallet" size={22} color={colors.ink} />
         </View>
         <Text selectable style={styles.summaryLabel}>
-          本月已花
+          本月支出
         </Text>
         <Text selectable style={styles.summaryAmount}>
           ¥{formatMoney(monthSpent)}
         </Text>
-        <Text selectable style={styles.summaryHint}>
-          预算 {ledger.monthlyBudget > 0 ? `¥${formatMoney(ledger.monthlyBudget)}` : '未设置'}
-        </Text>
+        <View style={styles.summaryMetrics}>
+          <Text selectable style={styles.summaryIncome}>
+            本月收入 +¥{formatMoney(monthSummary.income)}
+          </Text>
+          <Text selectable style={styles.summaryHint}>
+            预算{' '}
+            {ledger.monthlyBudget > 0
+              ? `¥${formatMoney(ledger.monthlyBudget)}`
+              : '未设置'}
+          </Text>
+        </View>
       </View>
 
       <Text style={styles.sectionTitle}>每月预算</Text>
@@ -243,7 +254,7 @@ export default function ProfileScreen() {
               设置
             </Text>
             <Text selectable style={styles.settingDescription}>
-              主题颜色、数据导入导出与清空
+              分类、主题、数据导入导出与清空
             </Text>
           </View>
         </View>
@@ -256,6 +267,9 @@ export default function ProfileScreen() {
 
       {settingsOpen ? (
         <View style={styles.settingsPanel}>
+          <CustomCategoryManager />
+
+          <View style={styles.panelDivider} />
           <Text style={styles.panelTitle}>主题颜色</Text>
           <Text selectable style={styles.settingDescription}>
             选择一个预设色，或输入自定义十六进制色值。
@@ -324,7 +338,7 @@ export default function ProfileScreen() {
           <View style={styles.panelDivider} />
           <Text style={styles.panelTitle}>数据迁移</Text>
           <Text selectable style={styles.settingDescription}>
-            JSON 备份包含流水、预算和主题。导入会完整替换当前数据。
+            JSON 备份包含流水、自定义分类、预算和主题。导入会完整替换当前数据。
           </Text>
           <View style={styles.transferActions}>
             <Pressable
@@ -402,7 +416,7 @@ export default function ProfileScreen() {
                 本地保存
               </Text>
               <Text selectable style={styles.settingDescription}>
-                流水、预算和主题会自动保存在当前设备
+                流水、分类、预算和主题会自动保存在当前设备
               </Text>
             </View>
             <View style={styles.statusDot} />
@@ -415,7 +429,7 @@ export default function ProfileScreen() {
                 清空全部账本数据？
               </Text>
               <Text selectable style={styles.confirmText}>
-                流水、预算和主题都会恢复为初始状态。
+                流水、自定义分类、预算和主题都会恢复为初始状态。
               </Text>
               <View style={styles.confirmActions}>
                 <Pressable
@@ -452,7 +466,7 @@ export default function ProfileScreen() {
       ) : null}
 
       <Text selectable style={styles.version}>
-        一页账 1.2.0
+        一页账 1.3.0
       </Text>
     </ScrollView>
   );
@@ -526,8 +540,21 @@ function createStyles(colors: LedgerPalette) {
       fontWeight: '800',
       letterSpacing: -1,
     },
-    summaryHint: {
+    summaryMetrics: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 6,
       marginTop: 5,
+    },
+    summaryIncome: {
+      color: '#467C66',
+      fontSize: 10.5,
+      fontVariant: ['tabular-nums'],
+      fontWeight: '700',
+    },
+    summaryHint: {
       color: colors.muted,
       fontSize: 10,
     },
