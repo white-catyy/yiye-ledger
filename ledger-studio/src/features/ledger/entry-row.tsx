@@ -11,12 +11,14 @@ import {
   LEGACY_OTHER_CATEGORY,
   type CategoryId,
   type EntryType,
+  type LedgerAccountId,
 } from './model';
 
 type LedgerEntryRowProps = {
   id: string;
   entryType: EntryType;
   categoryId: CategoryId;
+  accountId: LedgerAccountId;
   name: string;
   note: string;
   amount: number;
@@ -29,6 +31,7 @@ export const LedgerEntryRow = memo(function LedgerEntryRow({
   id,
   entryType,
   categoryId,
+  accountId,
   name,
   note,
   amount,
@@ -36,9 +39,10 @@ export const LedgerEntryRow = memo(function LedgerEntryRow({
   isLast,
   onEdit,
 }: LedgerEntryRowProps) {
-  const { categoriesById, colors } = useLedger();
+  const { categoriesById, colors, ledger } = useLedger();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const category = categoriesById[categoryId] ?? LEGACY_OTHER_CATEGORY;
+  const account = ledger.accounts.find((item) => item.id === accountId);
   const handlePress = useCallback(() => onEdit(id), [id, onEdit]);
 
   return (
@@ -68,7 +72,7 @@ export const LedgerEntryRow = memo(function LedgerEntryRow({
           </Text>
         </View>
         <Text numberOfLines={1} selectable style={styles.note}>
-          {note || category.label}
+          {account?.name ? `${account.name} · ${note || category.label}` : note || category.label}
         </Text>
       </View>
 

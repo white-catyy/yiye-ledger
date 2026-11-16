@@ -19,12 +19,17 @@ import { useLedger } from '@/features/ledger/ledger-provider';
 import {
   formatMoney,
   formatToday,
+  getActivitiesForDate,
   getDateKey,
   getYesterdayKey,
   isSameMonth,
   summarizeEntries,
+  type LedgerActivity,
   type LedgerEntry,
+  type LedgerTransfer,
 } from '@/features/ledger/model';
+import { TransferEditor } from '@/features/ledger/transfer-editor';
+import { TransferRow } from '@/features/ledger/transfer-row';
 
 type HomeStyles = ReturnType<typeof createHomeStyles>;
 
@@ -220,14 +225,28 @@ const BudgetFooter = memo(function BudgetFooter({
 });
 
 export default function HomeScreen() {
-  const { ledger, colors, upsertEntry, removeEntry } = useLedger();
+  const {
+    ledger,
+    colors,
+    upsertEntry,
+    removeEntry,
+    upsertTransfer,
+    removeTransfer,
+  } = useLedger();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [editorVisible, setEditorVisible] = useState(false);
   const [editingEntry, setEditingEntry] = useState<LedgerEntry | null>(null);
+  const [transferEditorVisible, setTransferEditorVisible] = useState(false);
+  const [editingTransfer, setEditingTransfer] =
+    useState<LedgerTransfer | null>(null);
   const styles = useMemo(() => createHomeStyles(colors), [colors]);
   const dateLabel = useMemo(() => formatToday(), []);
   const todayKey = getDateKey();
+  const todayActivities = useMemo(
+    () => getActivitiesForDate(ledger, todayKey),
+    [ledger, todayKey]
+  );
   const todayEntries = useMemo(
     () => ledger.entries.filter((entry) => entry.date === todayKey),
     [ledger.entries, todayKey]
@@ -289,21 +308,39 @@ export default function HomeScreen() {
     [removeEntry]
   );
 
-  const renderEntry = useCallback(
-    ({ item, index }: ListRenderItemInfo<LedgerEntry>) => (
-      <LedgerEntryRow
-        amount={item.amount}
-        categoryId={item.categoryId}
-        entryType={item.type}
-        id={item.id}
-        isLast={index === todayEntries.length - 1}
-        name={item.name}
-        note={item.note}
-        onEdit={handleEdit}
-        time={item.time}
-      />
-    ),
-    [handleEdit, todayEntries.length]
+  const handleEditTransfer = useCallback(
+    (id: string) => {
+      const target =
+        ledger.transfers.find((transfer) => transfer.id === id) ?? null;
+      setEditingTransfer(target);
+      setTransferEditorVisible(Boolean(target));
+    },
+    [ledger.transfers]
+  );
+
+  const renderActivity = useCallback(
+    ({ item, index }: ListRenderItemInfo<LedgerActivity>) =>
+      item.kind === 'entry' ? (
+        <LedgerEntryRow
+          accountId={item.entry.accountId}
+          amount={item.entry.amount}
+          categoryId={item.entry.categoryId}
+          entryType={item.entry.type}
+          id={item.entry.id}
+          isLast={index === todayActivities.length - 1}
+          name={item.entry.name}
+          note={item.entry.note}
+          onEdit={handleEdit}
+          time={item.entry.time}
+        />
+      ) : (
+        <TransferRow
+          isLast={index === todayActivities.length - 1}
+          onEdit={handleEditTransfer}
+          transfer={item.transfer}
+        />
+      ),
+    [handleEdit, handleEditTransfer, todayActivities.length]
   );
 
   return (
@@ -314,10 +351,12 @@ export default function HomeScreen() {
       <FlatList
         contentContainerStyle={listContentStyle}
         contentInsetAdjustmentBehavior="automatic"
-        data={todayEntries}
+        data={todayActivities}
         initialNumToRender={8}
         keyboardShouldPersistTaps="handled"
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) =>
+          item.kind === 'entry' ? item.entry.id : item.transfer.id
+        }
         ListEmptyComponent={<EmptyLedger colors={colors} styles={styles} />}
         ListFooterComponent={
           <BudgetFooter
@@ -332,7 +371,7 @@ export default function HomeScreen() {
           <HomeHeader
             comparison={comparison}
             colors={colors}
-            count={todayEntries.length}
+            count={todayActivities.length}
             dateLabel={dateLabel}
             expense={todaySummary.expense}
             income={todaySummary.income}
@@ -340,7 +379,7 @@ export default function HomeScreen() {
           />
         }
         removeClippedSubviews
-        renderItem={renderEntry}
+        renderItem={renderActivity}
         showsVerticalScrollIndicator={false}
         windowSize={7}
       />
@@ -365,6 +404,21 @@ export default function HomeScreen() {
         onDismiss={() => setEditorVisible(false)}
         onSave={handleSave}
         visible={editorVisible}
+      />
+
+      <TransferEditor
+        initialDate={todayKey}
+        onDelete={(id) => {
+          removeTransfer(id);
+          setTransferEditorVisible(false);
+        }}
+        onDismiss={() => setTransferEditorVisible(false)}
+        onSave={(transfer) => {
+          upsertTransfer(transfer);
+          setTransferEditorVisible(false);
+        }}
+        transfer={editingTransfer}
+        visible={transferEditorVisible}
       />
     </View>
   );

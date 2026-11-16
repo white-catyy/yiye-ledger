@@ -1,10 +1,15 @@
 import { normalizeThemeColor } from '@/constants/theme';
 
 import {
+  DEFAULT_ACCOUNT,
   getDateKey,
   INITIAL_LEDGER,
   sanitizeCustomCategories,
+  sanitizeLedgerAccounts,
+  sanitizeLedgerTransfers,
   type CategoryId,
+  type LedgerAccount,
+  type LedgerAccountId,
   type LedgerEntry,
   type LedgerState,
 } from './model';
@@ -29,6 +34,15 @@ function parseStoredLedger(value: string | null): LedgerState | null {
       return null;
     }
     const isLegacy = !parsed.themeColor || parsed.entries?.some((entry) => !entry.date);
+    const accounts = sanitizeLedgerAccounts(parsed.accounts);
+    const safeAccounts =
+      accounts.length > 0 ? accounts : [{ ...DEFAULT_ACCOUNT } satisfies LedgerAccount];
+    const accountIds = new Set<string>(
+      safeAccounts.map((account) => account.id)
+    );
+    const defaultAccountId = accountIds.has(parsed.defaultAccountId ?? '')
+      ? (parsed.defaultAccountId as LedgerAccountId)
+      : safeAccounts[0].id;
     const entries = (parsed.entries ?? [])
       .filter((entry) => !entry.id?.startsWith('sample-'))
       .map(
@@ -37,12 +51,19 @@ function parseStoredLedger(value: string | null): LedgerState | null {
             ...entry,
             type: entry.type === 'income' ? 'income' : 'expense',
             categoryId: (entry.categoryId ?? 'other') as CategoryId,
+            accountId: accountIds.has(entry.accountId ?? '')
+              ? (entry.accountId as LedgerAccountId)
+              : defaultAccountId,
             date: entry.date ?? getDateKey(),
           }) as LedgerEntry
       );
+    const transfers = sanitizeLedgerTransfers(parsed.transfers, accountIds);
 
     return {
       entries,
+      transfers,
+      accounts: safeAccounts,
+      defaultAccountId,
       customCategories: sanitizeCustomCategories(parsed.customCategories),
       monthlyBudget: isLegacy ? 0 : parsed.monthlyBudget,
       monthlySpentBeforeToday: isLegacy ? 0 : parsed.monthlySpentBeforeToday,

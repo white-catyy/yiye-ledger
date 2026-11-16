@@ -10,23 +10,34 @@ import {
 
 import { loadLedger, saveLedger } from './ledger-storage';
 import {
+  ACCOUNT_LIMIT,
+  ACCOUNT_NAME_LIMIT,
   CATEGORY_BY_ID,
   CUSTOM_CATEGORY_LIMIT,
   CUSTOM_CATEGORY_NAME_LIMIT,
   INITIAL_LEDGER,
+  createAccountId,
   createCustomCategoryId,
   customCategoryToDefinition,
+  getAccountBalances,
   getCategoriesForType,
+  getTotalAssets,
   isCustomCategoryColor,
   isCustomCategoryIcon,
   isEntryType,
+  isLedgerAccountColor,
+  isLedgerAccountKind,
   sortEntries,
   type CategoryDefinition,
   type CustomCategory,
   type CustomCategoryIconId,
   type EntryType,
+  type LedgerAccount,
+  type LedgerAccountId,
+  type LedgerAccountKind,
   type LedgerEntry,
   type LedgerState,
+  type LedgerTransfer,
 } from './model';
 import { createLedgerPalette, normalizeThemeColor } from '@/constants/theme';
 
@@ -53,15 +64,45 @@ export type CategoryDeleteResult =
       usageCount?: number;
     };
 
+export type AccountInput = {
+  id?: LedgerAccountId;
+  name: string;
+  kind: LedgerAccountKind;
+  color: string;
+  openingBalance: number;
+};
+
+export type AccountSaveResult =
+  | { ok: true; account: LedgerAccount }
+  | {
+      ok: false;
+      reason: 'invalid' | 'duplicate' | 'limit' | 'not-found';
+    };
+
+export type AccountDeleteResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: 'default' | 'in-use' | 'last-account' | 'not-found';
+      usageCount?: number;
+    };
+
 type LedgerContextValue = {
   ledger: LedgerState;
   colors: ReturnType<typeof createLedgerPalette>;
+  accountBalances: Record<string, number>;
+  totalAssets: number;
   categoriesById: Record<string, CategoryDefinition>;
   categoriesByType: Record<EntryType, CategoryDefinition[]>;
   upsertEntry: (entry: LedgerEntry) => void;
   removeEntry: (id: string) => void;
+  upsertTransfer: (transfer: LedgerTransfer) => void;
+  removeTransfer: (id: string) => void;
   resetLedger: () => void;
   replaceLedger: (ledger: LedgerState) => void;
+  saveAccount: (input: AccountInput) => AccountSaveResult;
+  deleteAccount: (id: LedgerAccountId) => AccountDeleteResult;
+  setDefaultAccount: (id: LedgerAccountId) => boolean;
   saveCustomCategory: (input: CustomCategoryInput) => CategorySaveResult;
   deleteCustomCategory: (id: string) => CategoryDeleteResult;
   setMonthlyBudget: (amount: number) => void;
@@ -95,10 +136,32 @@ export function LedgerProvider({ children }: PropsWithChildren) {
     }));
   }, []);
 
+  const upsertTransfer = useCallback((transfer: LedgerTransfer) => {
+    setLedger((current) => {
+      const exists = current.transfers.some((item) => item.id === transfer.id);
+      const transfers = exists
+        ? current.transfers.map((item) =>
+            item.id === transfer.id ? transfer : item
+          )
+        : [...current.transfers, transfer];
+
+      return { ...current, transfers };
+    });
+  }, []);
+
+  const removeTransfer = useCallback((id: string) => {
+    setLedger((current) => ({
+      ...current,
+      transfers: current.transfers.filter((transfer) => transfer.id !== id),
+    }));
+  }, []);
+
   const resetLedger = useCallback(() => {
     setLedger({
       ...INITIAL_LEDGER,
       entries: INITIAL_LEDGER.entries.map((entry) => ({ ...entry })),
+      transfers: [],
+      accounts: INITIAL_LEDGER.accounts.map((account) => ({ ...account })),
     });
   }, []);
 
@@ -106,9 +169,112 @@ export function LedgerProvider({ children }: PropsWithChildren) {
     setLedger({
       ...next,
       entries: sortEntries(next.entries.map((entry) => ({ ...entry }))),
+      transfers: next.transfers.map((transfer) => ({ ...transfer })),
+      accounts: next.accounts.map((account) => ({ ...account })),
       customCategories: next.customCategories.map((category) => ({ ...category })),
     });
   }, []);
+
+  const saveAccount = useCallback(
+    (input: AccountInput): AccountSaveResult => {
+      const name = input.name.trim();
+      if (
+        !name ||
+        name.length > ACCOUNT_NAME_LIMIT ||
+        !isLedgerAccountKind(input.kind) ||
+        !isLedgerAccountColor(input.color) ||
+        !Number.isFinite(input.openingBalance) ||
+        input.openingBalance < 0
+      ) {
+        return { ok: false, reason: 'invalid' };
+      }
+
+      const existing = input.id
+        ? ledger.accounts.find((account) => account.id === input.id)
+        : null;
+      if (input.id && !existing) {
+        return { ok: false, reason: 'not-found' };
+      }
+      if (
+        ledger.accounts.some(
+          (account) =>
+            account.id !== input.id &&
+            account.name.trim().toLocaleLowerCase() ===
+              name.toLocaleLowerCase()
+        )
+      ) {
+        return { ok: false, reason: 'duplicate' };
+      }
+      if (!existing && ledger.accounts.length >= ACCOUNT_LIMIT) {
+        return { ok: false, reason: 'limit' };
+      }
+
+      const account: LedgerAccount = {
+        id: existing?.id ?? createAccountId(),
+        name,
+        kind: input.kind,
+        color: input.color,
+        openingBalance: Math.round(input.openingBalance * 100) / 100,
+      };
+      setLedger((current) => ({
+        ...current,
+        accounts: existing
+          ? current.accounts.map((item) =>
+              item.id === account.id ? account : item
+            )
+          : [...current.accounts, account],
+        defaultAccountId: current.defaultAccountId || account.id,
+      }));
+      return { ok: true, account };
+    },
+    [ledger.accounts]
+  );
+
+  const deleteAccount = useCallback(
+    (id: LedgerAccountId): AccountDeleteResult => {
+      const account = ledger.accounts.find((item) => item.id === id);
+      if (!account) {
+        return { ok: false, reason: 'not-found' };
+      }
+      if (ledger.accounts.length <= 1) {
+        return { ok: false, reason: 'last-account' };
+      }
+      if (ledger.defaultAccountId === id) {
+        return { ok: false, reason: 'default' };
+      }
+      const usageCount =
+        ledger.entries.filter((entry) => entry.accountId === id).length +
+        ledger.transfers.filter(
+          (transfer) =>
+            transfer.fromAccountId === id || transfer.toAccountId === id
+        ).length;
+      if (usageCount > 0) {
+        return { ok: false, reason: 'in-use', usageCount };
+      }
+      setLedger((current) => ({
+        ...current,
+        accounts: current.accounts.filter((item) => item.id !== id),
+      }));
+      return { ok: true };
+    },
+    [
+      ledger.accounts,
+      ledger.defaultAccountId,
+      ledger.entries,
+      ledger.transfers,
+    ]
+  );
+
+  const setDefaultAccount = useCallback(
+    (id: LedgerAccountId) => {
+      if (!ledger.accounts.some((account) => account.id === id)) {
+        return false;
+      }
+      setLedger((current) => ({ ...current, defaultAccountId: id }));
+      return true;
+    },
+    [ledger.accounts]
+  );
 
   const saveCustomCategory = useCallback(
     (input: CustomCategoryInput): CategorySaveResult => {
@@ -209,6 +375,8 @@ export function LedgerProvider({ children }: PropsWithChildren) {
     () => createLedgerPalette(ledger.themeColor),
     [ledger.themeColor]
   );
+  const accountBalances = useMemo(() => getAccountBalances(ledger), [ledger]);
+  const totalAssets = useMemo(() => getTotalAssets(ledger), [ledger]);
   const categoriesById = useMemo(
     () => ({
       ...CATEGORY_BY_ID,
@@ -233,30 +401,44 @@ export function LedgerProvider({ children }: PropsWithChildren) {
     () => ({
       ledger,
       colors,
+      accountBalances,
+      totalAssets,
       categoriesById,
       categoriesByType,
       upsertEntry,
       removeEntry,
+      upsertTransfer,
+      removeTransfer,
       resetLedger,
       replaceLedger,
+      saveAccount,
+      deleteAccount,
+      setDefaultAccount,
       saveCustomCategory,
       deleteCustomCategory,
       setMonthlyBudget,
       setThemeColor,
     }),
     [
+      accountBalances,
       categoriesById,
       categoriesByType,
       colors,
+      deleteAccount,
       deleteCustomCategory,
       ledger,
       removeEntry,
+      removeTransfer,
       resetLedger,
       replaceLedger,
+      saveAccount,
+      setDefaultAccount,
       saveCustomCategory,
       setMonthlyBudget,
       setThemeColor,
+      totalAssets,
       upsertEntry,
+      upsertTransfer,
     ]
   );
 

@@ -15,6 +15,8 @@ import {
   THEME_PRESETS,
   type LedgerPalette,
 } from '@/constants/theme';
+import { AccountIcon } from '@/features/ledger/account-icon';
+import { AccountManager } from '@/features/ledger/account-manager';
 import { AppIcon } from '@/features/ledger/app-icon';
 import type { LedgerBackup } from '@/features/ledger/backup';
 import { CustomCategoryManager } from '@/features/ledger/custom-category-manager';
@@ -22,10 +24,12 @@ import { exportLedgerData, importLedgerData } from '@/features/ledger/data-trans
 import { useLedger } from '@/features/ledger/ledger-provider';
 import {
   formatMoney,
+  getAccountKindDefinition,
   isSameMonth,
   normalizeAmountInput,
   summarizeEntries,
 } from '@/features/ledger/model';
+import { TransferEditor } from '@/features/ledger/transfer-editor';
 
 type TransferState = {
   tone: 'neutral' | 'success' | 'error';
@@ -34,16 +38,21 @@ type TransferState = {
 
 export default function ProfileScreen() {
   const {
+    accountBalances,
     ledger,
     colors,
+    totalAssets,
     replaceLedger,
     resetLedger,
     setMonthlyBudget,
     setThemeColor,
+    upsertTransfer,
+    removeTransfer,
   } = useLedger();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [transferEditorVisible, setTransferEditorVisible] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState(
     ledger.monthlyBudget > 0 ? String(ledger.monthlyBudget) : ''
   );
@@ -183,6 +192,93 @@ export default function ProfileScreen() {
         </View>
       </View>
 
+      <View style={styles.assetsCard}>
+        <View style={styles.assetsTop}>
+          <View style={styles.assetsCopy}>
+            <Text selectable style={styles.assetsLabel}>
+              总资产
+            </Text>
+            <Text
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+              numberOfLines={1}
+              selectable
+              style={styles.assetsAmount}>
+              ¥{formatMoney(totalAssets)}
+            </Text>
+            <Text selectable style={styles.assetsHint}>
+              {ledger.accounts.length} 个资金账户 · 转账不计入收支
+            </Text>
+          </View>
+          <View style={styles.assetsMark}>
+            <AppIcon name="wallet" size={25} color={colors.ink} />
+          </View>
+        </View>
+
+        <View style={styles.accountPreview}>
+          {ledger.accounts.slice(0, 3).map((account) => {
+            const kind = getAccountKindDefinition(account.kind);
+            return (
+              <View key={account.id} style={styles.accountPreviewItem}>
+                <View
+                  style={[
+                    styles.accountPreviewIcon,
+                    { backgroundColor: `${account.color}18` },
+                  ]}>
+                  <AccountIcon
+                    color={account.color}
+                    kind={account.kind}
+                    size={15}
+                  />
+                </View>
+                <View style={styles.accountPreviewCopy}>
+                  <Text
+                    numberOfLines={1}
+                    selectable
+                    style={styles.accountPreviewName}>
+                    {account.name}
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    selectable
+                    style={styles.accountPreviewBalance}>
+                    ¥{formatMoney(accountBalances[account.id] ?? 0)}
+                  </Text>
+                </View>
+                {ledger.defaultAccountId === account.id ? (
+                  <Text style={styles.accountDefaultDot}>默认</Text>
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
+
+        <View style={styles.assetsActions}>
+          <Pressable
+            accessibilityLabel="账户转账"
+            accessibilityRole="button"
+            onPress={() => setTransferEditorVisible(true)}
+            style={({ pressed }) => [
+              styles.assetsPrimaryButton,
+              pressed && styles.pressed,
+            ]}>
+            <AppIcon name="trend" size={16} color={colors.ink} />
+            <Text style={styles.assetsPrimaryText}>账户转账</Text>
+          </Pressable>
+          <Pressable
+            accessibilityLabel="管理资金账户"
+            accessibilityRole="button"
+            onPress={() => setSettingsOpen(true)}
+            style={({ pressed }) => [
+              styles.assetsSecondaryButton,
+              pressed && styles.pressed,
+            ]}>
+            <AppIcon name="settings" size={16} color={colors.inkSoft} />
+            <Text style={styles.assetsSecondaryText}>管理账户</Text>
+          </Pressable>
+        </View>
+      </View>
+
       <View style={styles.summaryCard}>
         <View style={styles.summaryIcon}>
           <AppIcon name="wallet" size={22} color={colors.ink} />
@@ -254,7 +350,7 @@ export default function ProfileScreen() {
               设置
             </Text>
             <Text selectable style={styles.settingDescription}>
-              分类、主题、数据导入导出与清空
+              账户、分类、主题、数据导入导出与清空
             </Text>
           </View>
         </View>
@@ -267,6 +363,9 @@ export default function ProfileScreen() {
 
       {settingsOpen ? (
         <View style={styles.settingsPanel}>
+          <AccountManager />
+
+          <View style={styles.panelDivider} />
           <CustomCategoryManager />
 
           <View style={styles.panelDivider} />
@@ -338,7 +437,7 @@ export default function ProfileScreen() {
           <View style={styles.panelDivider} />
           <Text style={styles.panelTitle}>数据迁移</Text>
           <Text selectable style={styles.settingDescription}>
-            JSON 备份包含流水、自定义分类、预算和主题。导入会完整替换当前数据。
+            JSON 备份包含资金账户、转账、流水、自定义分类、预算和主题。导入会完整替换当前数据。
           </Text>
           <View style={styles.transferActions}>
             <Pressable
@@ -416,7 +515,7 @@ export default function ProfileScreen() {
                 本地保存
               </Text>
               <Text selectable style={styles.settingDescription}>
-                流水、分类、预算和主题会自动保存在当前设备
+                账户、转账、流水、分类、预算和主题会自动保存在当前设备
               </Text>
             </View>
             <View style={styles.statusDot} />
@@ -429,7 +528,7 @@ export default function ProfileScreen() {
                 清空全部账本数据？
               </Text>
               <Text selectable style={styles.confirmText}>
-                流水、自定义分类、预算和主题都会恢复为初始状态。
+                账户、转账、流水、自定义分类、预算和主题都会恢复为初始状态。
               </Text>
               <View style={styles.confirmActions}>
                 <Pressable
@@ -465,8 +564,22 @@ export default function ProfileScreen() {
         </View>
       ) : null}
 
+      <TransferEditor
+        onDelete={(id) => {
+          removeTransfer(id);
+          setTransferEditorVisible(false);
+        }}
+        onDismiss={() => setTransferEditorVisible(false)}
+        onSave={(transfer) => {
+          upsertTransfer(transfer);
+          setTransferEditorVisible(false);
+        }}
+        transfer={null}
+        visible={transferEditorVisible}
+      />
+
       <Text selectable style={styles.version}>
-        一页账 1.3.0
+        一页账 1.4.0
       </Text>
     </ScrollView>
   );
@@ -511,6 +624,132 @@ function createStyles(colors: LedgerPalette) {
       color: colors.frost,
       fontSize: 18,
       fontWeight: '800',
+    },
+    assetsCard: {
+      gap: 15,
+      overflow: 'hidden',
+      borderRadius: 26,
+      backgroundColor: colors.ink,
+      padding: 19,
+      boxShadow: '0px 14px 30px rgba(35, 77, 96, 0.18)',
+    },
+    assetsTop: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 16,
+    },
+    assetsCopy: {
+      minWidth: 0,
+      flex: 1,
+      gap: 2,
+    },
+    assetsLabel: {
+      color: colors.frost,
+      fontSize: 11,
+      fontWeight: '700',
+      opacity: 0.82,
+    },
+    assetsAmount: {
+      color: colors.card,
+      fontSize: 37,
+      fontVariant: ['tabular-nums'],
+      fontWeight: '800',
+      letterSpacing: -1.4,
+    },
+    assetsHint: {
+      color: colors.frost,
+      fontSize: 9.5,
+      opacity: 0.72,
+    },
+    assetsMark: {
+      width: 48,
+      height: 48,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 16,
+      backgroundColor: colors.frost,
+    },
+    accountPreview: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    accountPreviewItem: {
+      minWidth: '30%',
+      flexGrow: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      borderRadius: 14,
+      backgroundColor: 'rgba(255,255,255,0.09)',
+      paddingHorizontal: 9,
+      paddingVertical: 8,
+    },
+    accountPreviewIcon: {
+      width: 30,
+      height: 30,
+      flexShrink: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 10,
+    },
+    accountPreviewCopy: {
+      minWidth: 0,
+      flex: 1,
+      gap: 1,
+    },
+    accountPreviewName: {
+      color: colors.card,
+      fontSize: 9.5,
+      fontWeight: '700',
+    },
+    accountPreviewBalance: {
+      color: colors.frost,
+      fontSize: 9,
+      fontVariant: ['tabular-nums'],
+      opacity: 0.8,
+    },
+    accountDefaultDot: {
+      color: colors.frost,
+      fontSize: 8,
+      fontWeight: '800',
+      opacity: 0.74,
+    },
+    assetsActions: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    assetsPrimaryButton: {
+      minHeight: 42,
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+      borderRadius: 14,
+      backgroundColor: colors.frost,
+    },
+    assetsPrimaryText: {
+      color: colors.ink,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    assetsSecondaryButton: {
+      minHeight: 42,
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.16)',
+      borderRadius: 14,
+      backgroundColor: 'rgba(255,255,255,0.07)',
+    },
+    assetsSecondaryText: {
+      color: colors.frost,
+      fontSize: 11,
+      fontWeight: '700',
     },
     summaryCard: {
       minHeight: 166,

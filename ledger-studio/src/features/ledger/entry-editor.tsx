@@ -12,6 +12,7 @@ import {
 
 import type { LedgerPalette } from '@/constants/theme';
 
+import { AccountIcon } from './account-icon';
 import { AppIcon } from './app-icon';
 import { CategoryIcon } from './category-icon';
 import { useLedger } from './ledger-provider';
@@ -19,6 +20,7 @@ import {
   LEGACY_OTHER_CATEGORY,
   createEntryId,
   formatEntryDate,
+  formatMoney,
   getDateKey,
   getCurrentTime,
   isValidTime,
@@ -27,12 +29,15 @@ import {
   type CategoryId,
   type CategoryDefinition,
   type EntryType,
+  type LedgerAccount,
+  type LedgerAccountId,
   type LedgerEntry,
 } from './model';
 
 type Draft = {
   type: EntryType;
   categoryId: CategoryId;
+  accountId: LedgerAccountId;
   name: string;
   note: string;
   amount: string;
@@ -52,13 +57,20 @@ type EntryEditorProps = {
 function getDraft(
   entry: LedgerEntry | null,
   initialDate: string | undefined,
-  categoriesByType: Record<EntryType, CategoryDefinition[]>
+  categoriesByType: Record<EntryType, CategoryDefinition[]>,
+  accounts: LedgerAccount[],
+  defaultAccountId: LedgerAccountId
 ): Draft {
   const type = entry?.type ?? 'expense';
+  const accountId =
+    accounts.find((account) => account.id === entry?.accountId)?.id ??
+    accounts.find((account) => account.id === defaultAccountId)?.id ??
+    accounts[0].id;
   return {
     type,
     categoryId:
       entry?.categoryId ?? (categoriesByType[type][0].id as CategoryId),
+    accountId,
     name: entry?.name ?? '',
     note: entry?.note ?? '',
     amount: entry ? String(entry.amount) : '',
@@ -75,21 +87,48 @@ export function EntryEditor({
   onSave,
   onDelete,
 }: EntryEditorProps) {
-  const { categoriesById, categoriesByType, colors } = useLedger();
+  const {
+    accountBalances,
+    categoriesById,
+    categoriesByType,
+    colors,
+    ledger,
+  } = useLedger();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [draft, setDraft] = useState<Draft>(() =>
-    getDraft(entry, initialDate, categoriesByType)
+    getDraft(
+      entry,
+      initialDate,
+      categoriesByType,
+      ledger.accounts,
+      ledger.defaultAccountId
+    )
   );
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     if (visible) {
-      setDraft(getDraft(entry, initialDate, categoriesByType));
+      setDraft(
+        getDraft(
+          entry,
+          initialDate,
+          categoriesByType,
+          ledger.accounts,
+          ledger.defaultAccountId
+        )
+      );
       setError('');
       setConfirmDelete(false);
     }
-  }, [categoriesByType, entry, initialDate, visible]);
+  }, [
+    categoriesByType,
+    entry,
+    initialDate,
+    ledger.accounts,
+    ledger.defaultAccountId,
+    visible,
+  ]);
 
   const currentCategory =
     categoriesById[draft.categoryId] ??
@@ -125,11 +164,16 @@ export function EntryEditor({
       setError('时间格式应为 08:30');
       return;
     }
+    if (!ledger.accounts.some((account) => account.id === draft.accountId)) {
+      setError('请选择一个资金账户');
+      return;
+    }
 
     onSave({
       id: entry?.id ?? createEntryId(),
       type: draft.type,
       categoryId: draft.categoryId,
+      accountId: draft.accountId,
       name: draft.name.trim(),
       note: draft.note.trim(),
       amount: Math.round(amount * 100) / 100,
@@ -231,6 +275,50 @@ export function EntryEditor({
                     ]}>
                     {type === 'income' ? '收入' : '支出'}
                   </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={styles.sectionLabel}>资金账户</Text>
+          <View style={styles.accountGrid}>
+            {ledger.accounts.map((account) => {
+              const active = account.id === draft.accountId;
+              return (
+                <Pressable
+                  accessibilityLabel={`选择${account.name}账户`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  key={account.id}
+                  onPress={() => updateDraft('accountId', account.id)}
+                  style={({ pressed }) => [
+                    styles.accountOption,
+                    active && styles.accountOptionActive,
+                    pressed && styles.pressed,
+                  ]}>
+                  <View style={[styles.accountIcon, { backgroundColor: `${account.color}18` }]}>
+                    <AccountIcon
+                      kind={account.kind}
+                      color={account.color}
+                      size={18}
+                    />
+                  </View>
+                  <View style={styles.accountCopy}>
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.accountName,
+                        active && styles.accountNameActive,
+                      ]}>
+                      {account.name}
+                    </Text>
+                    <Text
+                      numberOfLines={1}
+                      selectable
+                      style={styles.accountBalance}>
+                      ¥{formatMoney(accountBalances[account.id] ?? 0)}
+                    </Text>
+                  </View>
                 </Pressable>
               );
             })}
@@ -474,6 +562,55 @@ function createStyles(colors: LedgerPalette) {
   typeOptionTextActive: {
     color: colors.ink,
     fontWeight: '800',
+  },
+  accountGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  accountOption: {
+    minWidth: '46%',
+    flexGrow: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 16,
+    backgroundColor: colors.input,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+  },
+  accountOptionActive: {
+    borderColor: colors.skyDeep,
+    backgroundColor: colors.frost,
+  },
+  accountIcon: {
+    width: 34,
+    height: 34,
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 11,
+  },
+  accountCopy: {
+    minWidth: 0,
+    flex: 1,
+    gap: 2,
+  },
+  accountName: {
+    color: colors.inkSoft,
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  accountNameActive: {
+    color: colors.ink,
+    fontWeight: '800',
+  },
+  accountBalance: {
+    color: colors.muted,
+    fontSize: 9.5,
+    fontVariant: ['tabular-nums'],
   },
   categoryGrid: {
     flexDirection: 'row',

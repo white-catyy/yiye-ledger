@@ -10,19 +10,34 @@ import { useLedger } from '@/features/ledger/ledger-provider';
 import {
   formatEntryDate,
   formatMoney,
+  getActivitiesForDate,
   getDateKey,
   summarizeEntries,
+  type LedgerActivity,
   type LedgerEntry,
+  type LedgerTransfer,
 } from '@/features/ledger/model';
 import { MonthCalendar } from '@/features/ledger/month-calendar';
+import { TransferEditor } from '@/features/ledger/transfer-editor';
+import { TransferRow } from '@/features/ledger/transfer-row';
 
 export default function DetailScreen() {
-  const { ledger, colors, upsertEntry, removeEntry } = useLedger();
+  const {
+    ledger,
+    colors,
+    upsertEntry,
+    removeEntry,
+    upsertTransfer,
+    removeTransfer,
+  } = useLedger();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [selectedDate, setSelectedDate] = useState(getDateKey);
   const [editorVisible, setEditorVisible] = useState(false);
   const [editingEntry, setEditingEntry] = useState<LedgerEntry | null>(null);
+  const [transferEditorVisible, setTransferEditorVisible] = useState(false);
+  const [editingTransfer, setEditingTransfer] =
+    useState<LedgerTransfer | null>(null);
 
   const entryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -32,11 +47,13 @@ export default function DetailScreen() {
     return counts;
   }, [ledger.entries]);
 
+  const selectedActivities = useMemo(
+    () => getActivitiesForDate(ledger, selectedDate),
+    [ledger, selectedDate]
+  );
   const selectedEntries = useMemo(
     () =>
-      ledger.entries
-        .filter((entry) => entry.date === selectedDate)
-        .sort((left, right) => left.time.localeCompare(right.time)),
+      ledger.entries.filter((entry) => entry.date === selectedDate),
     [ledger.entries, selectedDate]
   );
   const selectedSummary = useMemo(
@@ -58,6 +75,16 @@ export default function DetailScreen() {
     setEditorVisible(true);
   }, []);
 
+  const handleEditTransfer = useCallback(
+    (id: string) => {
+      const target =
+        ledger.transfers.find((transfer) => transfer.id === id) ?? null;
+      setEditingTransfer(target);
+      setTransferEditorVisible(Boolean(target));
+    },
+    [ledger.transfers]
+  );
+
   const contentStyle = useMemo(
     () => [
       styles.content,
@@ -71,8 +98,10 @@ export default function DetailScreen() {
       <FlatList
         contentContainerStyle={contentStyle}
         contentInsetAdjustmentBehavior="automatic"
-        data={selectedEntries}
-        keyExtractor={(item) => item.id}
+        data={selectedActivities}
+        keyExtractor={(item) =>
+          item.kind === 'entry' ? item.entry.id : item.transfer.id
+        }
         ListEmptyComponent={<EmptyDay colors={colors} styles={styles} />}
         ListFooterComponent={
           <Text selectable style={styles.footerHint}>
@@ -115,7 +144,7 @@ export default function DetailScreen() {
                     收入 +¥{formatMoney(selectedSummary.income)}
                   </Text>
                   <Text selectable style={styles.dayCount}>
-                    {selectedEntries.length} 笔流水
+                  {selectedActivities.length} 笔流水
                   </Text>
                 </View>
               </View>
@@ -129,7 +158,7 @@ export default function DetailScreen() {
               </Pressable>
             </View>
 
-            {selectedEntries.length > 0 ? (
+            {selectedActivities.length > 0 ? (
               <View style={styles.listLabelRow}>
                 <Text style={styles.listLabel}>当天流水</Text>
                 <Text style={styles.listHint}>轻点可改</Text>
@@ -138,19 +167,34 @@ export default function DetailScreen() {
           </View>
         }
         removeClippedSubviews
-        renderItem={({ item, index }) => (
-          <LedgerEntryRow
-            amount={item.amount}
-            categoryId={item.categoryId}
-            entryType={item.type}
-            id={item.id}
-            isLast={index === selectedEntries.length - 1}
-            name={item.name}
-            note={item.note}
-            onEdit={handleEdit}
-            time={item.time}
-          />
-        )}
+        renderItem={({
+          item,
+          index,
+        }: {
+          item: LedgerActivity;
+          index: number;
+        }) =>
+          item.kind === 'entry' ? (
+            <LedgerEntryRow
+              accountId={item.entry.accountId}
+              amount={item.entry.amount}
+              categoryId={item.entry.categoryId}
+              entryType={item.entry.type}
+              id={item.entry.id}
+              isLast={index === selectedActivities.length - 1}
+              name={item.entry.name}
+              note={item.entry.note}
+              onEdit={handleEdit}
+              time={item.entry.time}
+            />
+          ) : (
+            <TransferRow
+              isLast={index === selectedActivities.length - 1}
+              onEdit={handleEditTransfer}
+              transfer={item.transfer}
+            />
+          )
+        }
         showsVerticalScrollIndicator={false}
       />
 
@@ -168,6 +212,22 @@ export default function DetailScreen() {
           setEditorVisible(false);
         }}
         visible={editorVisible}
+      />
+
+      <TransferEditor
+        initialDate={selectedDate}
+        onDelete={(id) => {
+          removeTransfer(id);
+          setTransferEditorVisible(false);
+        }}
+        onDismiss={() => setTransferEditorVisible(false)}
+        onSave={(transfer) => {
+          upsertTransfer(transfer);
+          setSelectedDate(transfer.date);
+          setTransferEditorVisible(false);
+        }}
+        transfer={editingTransfer}
+        visible={transferEditorVisible}
       />
     </View>
   );

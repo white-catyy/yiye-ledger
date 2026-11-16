@@ -1,30 +1,40 @@
 import { normalizeThemeColor } from '@/constants/theme';
 
 import {
+  ACCOUNT_LIMIT,
+  DEFAULT_ACCOUNT,
   CATEGORY_BY_ID,
   CUSTOM_CATEGORY_LIMIT,
   getDateKey,
   isEntryType,
   isValidTime,
   sanitizeCustomCategories,
+  sanitizeLedgerAccounts,
+  sanitizeLedgerTransfers,
   sortEntries,
   type CustomCategory,
+  type LedgerAccount,
+  type LedgerAccountId,
   type LedgerEntry,
   type LedgerState,
+  type LedgerTransfer,
 } from './model';
 
 export type LedgerBackupV1 = {
   format: 'yiye-ledger-backup';
   version: 1;
   exportedAt: string;
-  data: Omit<LedgerState, 'customCategories' | 'entries'> & {
-    entries: Array<Omit<LedgerEntry, 'type'>>;
+  data: Omit<
+    LedgerState,
+    'customCategories' | 'entries' | 'accounts' | 'transfers' | 'defaultAccountId'
+  > & {
+    entries: Array<Omit<LedgerEntry, 'type' | 'accountId'>>;
   };
 };
 
 export type LedgerBackup = {
   format: 'yiye-ledger-backup';
-  version: 2;
+  version: 3;
   exportedAt: string;
   data: LedgerState;
 };
@@ -92,11 +102,13 @@ function parseCustomCategories(value: unknown) {
 export function createLedgerBackup(ledger: LedgerState): LedgerBackup {
   return {
     format: 'yiye-ledger-backup',
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     data: {
       ...ledger,
       entries: ledger.entries.map((entry) => ({ ...entry })),
+      transfers: ledger.transfers.map((transfer) => ({ ...transfer })),
+      accounts: ledger.accounts.map((account) => ({ ...account })),
       customCategories: ledger.customCategories.map((category) => ({
         ...category,
       })),
@@ -123,7 +135,7 @@ export function parseLedgerBackup(content: string): BackupParseResult {
   if (!isRecord(parsed) || parsed.format !== 'yiye-ledger-backup') {
     return { ok: false, error: '这不是一页账备份文件' };
   }
-  if (parsed.version !== 1 && parsed.version !== 2) {
+  if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3) {
     return { ok: false, error: '备份版本不受支持，请更新 App 后重试' };
   }
   if (typeof parsed.exportedAt !== 'string' || Number.isNaN(Date.parse(parsed.exportedAt))) {
@@ -157,6 +169,36 @@ export function parseLedgerBackup(content: string): BackupParseResult {
     return customCategoryResult;
   }
 
+  let accounts: LedgerAccount[];
+  if (version === 3) {
+    if (!Array.isArray(data.accounts)) {
+      return { ok: false, error: '备份缺少资金账户数据' };
+    }
+    accounts = sanitizeLedgerAccounts(data.accounts);
+    if (
+      accounts.length !== data.accounts.length ||
+      accounts.length === 0 ||
+      accounts.length > ACCOUNT_LIMIT
+    ) {
+      return { ok: false, error: '备份中的资金账户内容无效' };
+    }
+  } else {
+    accounts = [{ ...DEFAULT_ACCOUNT }];
+  }
+
+  const accountIds = new Set<string>(
+    accounts.map((account) => account.id)
+  );
+  if (
+    version === 3 &&
+    !accountIds.has(String(data.defaultAccountId ?? ''))
+  ) {
+    return { ok: false, error: '备份中的默认账户无效' };
+  }
+  const defaultAccountId = accountIds.has(String(data.defaultAccountId ?? ''))
+    ? (data.defaultAccountId as LedgerAccountId)
+    : accounts[0].id;
+
   const customCategoryById = new Map<string, CustomCategory>(
     customCategoryResult.categories.map((category) => [category.id, category])
   );
@@ -174,6 +216,10 @@ export function parseLedgerBackup(content: string): BackupParseResult {
       CATEGORY_BY_ID[categoryId] ?? customCategoryById.get(categoryId);
     const amount = candidate.amount;
     const date = String(candidate.date ?? '');
+    const accountId =
+      version === 3
+        ? String(candidate.accountId ?? '')
+        : defaultAccountId;
     if (
       typeof candidate.id !== 'string' ||
       !candidate.id ||
@@ -184,6 +230,7 @@ export function parseLedgerBackup(content: string): BackupParseResult {
       !isEntryType(entryType) ||
       !category ||
       category.type !== entryType ||
+      !accountIds.has(accountId) ||
       !isNonNegativeNumber(amount) ||
       amount <= 0 ||
       typeof candidate.time !== 'string' ||
@@ -199,6 +246,7 @@ export function parseLedgerBackup(content: string): BackupParseResult {
       id: candidate.id,
       type: entryType,
       categoryId: categoryId as LedgerEntry['categoryId'],
+      accountId: accountId as LedgerAccountId,
       name: candidate.name.trim(),
       note: candidate.note,
       amount,
@@ -207,14 +255,36 @@ export function parseLedgerBackup(content: string): BackupParseResult {
     });
   }
 
+  let transfers: LedgerTransfer[];
+  if (version === 3) {
+    if (!Array.isArray(data.transfers)) {
+      return { ok: false, error: '备份缺少转账数据' };
+    }
+    transfers = sanitizeLedgerTransfers(data.transfers, accountIds);
+    if (
+      transfers.length !== data.transfers.length ||
+      transfers.some(
+        (transfer) =>
+          !isValidDateKey(transfer.date) || transfer.date > getDateKey()
+      )
+    ) {
+      return { ok: false, error: '备份中的转账内容无效' };
+    }
+  } else {
+    transfers = [];
+  }
+
   return {
     ok: true,
     backup: {
       format: 'yiye-ledger-backup',
-      version: 2,
+      version: 3,
       exportedAt: parsed.exportedAt,
       data: {
         entries: sortEntries(entries),
+        transfers,
+        accounts,
+        defaultAccountId,
         customCategories: customCategoryResult.categories,
         monthlyBudget: data.monthlyBudget,
         monthlySpentBeforeToday: data.monthlySpentBeforeToday,

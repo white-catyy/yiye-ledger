@@ -1,5 +1,46 @@
 export type EntryType = 'expense' | 'income';
 
+export type LedgerAccountId = `account-${string}`;
+
+export type LedgerAccountKind =
+  | 'cash'
+  | 'bank'
+  | 'alipay'
+  | 'wechat'
+  | 'campus'
+  | 'other';
+
+export type LedgerAccount = {
+  id: LedgerAccountId;
+  name: string;
+  kind: LedgerAccountKind;
+  color: string;
+  openingBalance: number;
+};
+
+export type LedgerAccountDefinition = {
+  id: LedgerAccountKind;
+  label: string;
+  sf: string;
+  material: string;
+  tint: string;
+  ink: string;
+};
+
+export type LedgerTransfer = {
+  id: string;
+  fromAccountId: LedgerAccountId;
+  toAccountId: LedgerAccountId;
+  amount: number;
+  note: string;
+  time: string;
+  date: string;
+};
+
+export type LedgerActivity =
+  | { kind: 'entry'; entry: LedgerEntry }
+  | { kind: 'transfer'; transfer: LedgerTransfer };
+
 export type BuiltinCategoryId =
   | 'meal'
   | 'drink'
@@ -22,6 +63,7 @@ export type LedgerEntry = {
   id: string;
   type: EntryType;
   categoryId: CategoryId;
+  accountId: LedgerAccountId;
   name: string;
   note: string;
   amount: number;
@@ -31,6 +73,9 @@ export type LedgerEntry = {
 
 export type LedgerState = {
   entries: LedgerEntry[];
+  transfers: LedgerTransfer[];
+  accounts: LedgerAccount[];
+  defaultAccountId: LedgerAccountId;
   customCategories: CustomCategory[];
   monthlyBudget: number;
   monthlySpentBeforeToday: number;
@@ -83,6 +128,86 @@ export type CategoryDefinition = {
 
 export const CUSTOM_CATEGORY_LIMIT = 20;
 export const CUSTOM_CATEGORY_NAME_LIMIT = 12;
+export const ACCOUNT_LIMIT = 20;
+export const ACCOUNT_NAME_LIMIT = 16;
+export const DEFAULT_ACCOUNT_ID = 'account-cash' as const;
+
+export const ACCOUNT_COLORS = [
+  '#397A99',
+  '#4B7F9D',
+  '#5B9A7B',
+  '#6A8F5D',
+  '#C9975A',
+  '#C47A8A',
+  '#8B7BC1',
+  '#6B79B8',
+] as const;
+
+export const ACCOUNT_KINDS: LedgerAccountDefinition[] = [
+  {
+    id: 'cash',
+    label: '现金',
+    sf: 'banknote.fill',
+    material: 'payments',
+    tint: '#DFF1F7',
+    ink: '#397A99',
+  },
+  {
+    id: 'bank',
+    label: '银行卡',
+    sf: 'creditcard.fill',
+    material: 'credit-card',
+    tint: '#E6EEF8',
+    ink: '#557E9C',
+  },
+  {
+    id: 'alipay',
+    label: '支付宝',
+    sf: 'a.circle.fill',
+    material: 'account-balance-wallet',
+    tint: '#DDEEF9',
+    ink: '#367DA6',
+  },
+  {
+    id: 'wechat',
+    label: '微信',
+    sf: 'message.fill',
+    material: 'chat',
+    tint: '#E2F2E9',
+    ink: '#4B856B',
+  },
+  {
+    id: 'campus',
+    label: '校园卡',
+    sf: 'graduationcap.fill',
+    material: 'school',
+    tint: '#EEF2DA',
+    ink: '#708450',
+  },
+  {
+    id: 'other',
+    label: '其他',
+    sf: 'wallet.bifold',
+    material: 'account-balance-wallet',
+    tint: '#E9EEF4',
+    ink: '#657A8D',
+  },
+];
+
+export const ACCOUNT_KIND_BY_ID: Record<
+  LedgerAccountKind,
+  LedgerAccountDefinition
+> = Object.fromEntries(
+  ACCOUNT_KINDS.map((account) => [account.id, account])
+) as Record<LedgerAccountKind, LedgerAccountDefinition>;
+
+export const DEFAULT_ACCOUNT: LedgerAccount = {
+  id: DEFAULT_ACCOUNT_ID,
+  name: '现金',
+  kind: 'cash',
+  color: ACCOUNT_COLORS[0],
+  openingBalance: 0,
+};
 
 export const CUSTOM_CATEGORY_ICONS: CustomCategoryIcon[] = [
   { id: 'food', label: '餐饮', sf: 'fork.knife', material: 'restaurant' },
@@ -296,6 +421,9 @@ export const CATEGORY_BY_ID: Record<string, CategoryDefinition> = Object.fromEnt
 );
 
 export const INITIAL_LEDGER: LedgerState = {
+  accounts: [{ ...DEFAULT_ACCOUNT }],
+  transfers: [],
+  defaultAccountId: DEFAULT_ACCOUNT_ID,
   customCategories: [],
   monthlyBudget: 0,
   monthlySpentBeforeToday: 0,
@@ -396,8 +524,37 @@ export function createCustomCategoryId() {
     .slice(2, 8)}` as const;
 }
 
+export function createAccountId() {
+  return `account-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}` as const;
+}
+
+export function createTransferId() {
+  return `transfer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function isEntryType(value: unknown): value is EntryType {
   return value === 'expense' || value === 'income';
+}
+
+export function isLedgerAccountKind(
+  value: unknown
+): value is LedgerAccountKind {
+  return ACCOUNT_KINDS.some((account) => account.id === value);
+}
+
+export function isLedgerAccountColor(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    ACCOUNT_COLORS.includes(value as (typeof ACCOUNT_COLORS)[number])
+  );
+}
+
+export function getAccountKindDefinition(kind: string) {
+  return (
+    ACCOUNT_KIND_BY_ID[kind as LedgerAccountKind] ?? ACCOUNT_KIND_BY_ID.other
+  );
 }
 
 export function isCustomCategoryIcon(
@@ -438,6 +595,106 @@ export function customCategoryToDefinition(
   };
 }
 
+export function sanitizeLedgerAccounts(value: unknown): LedgerAccount[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  return value
+    .flatMap((candidate) => {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+        return [];
+      }
+      const account = candidate as Record<string, unknown>;
+      const id = typeof account.id === 'string' ? account.id : '';
+      const name = typeof account.name === 'string' ? account.name.trim() : '';
+      const nameKey = name.toLocaleLowerCase();
+      if (
+        !/^account-[a-z0-9-]+$/.test(id) ||
+        ids.has(id) ||
+        !name ||
+        name.length > ACCOUNT_NAME_LIMIT ||
+        names.has(nameKey) ||
+        !isLedgerAccountKind(account.kind) ||
+        !isLedgerAccountColor(account.color) ||
+        typeof account.openingBalance !== 'number' ||
+        !Number.isFinite(account.openingBalance) ||
+        account.openingBalance < 0
+      ) {
+        return [];
+      }
+      ids.add(id);
+      names.add(nameKey);
+      return [
+        {
+          id: id as LedgerAccountId,
+          name,
+          kind: account.kind,
+          color: account.color,
+          openingBalance: Math.round(account.openingBalance * 100) / 100,
+        } satisfies LedgerAccount,
+      ];
+    })
+    .slice(0, ACCOUNT_LIMIT);
+}
+
+export function sanitizeLedgerTransfers(
+  value: unknown,
+  accountIds: Set<string>
+): LedgerTransfer[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const ids = new Set<string>();
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      return [];
+    }
+    const transfer = candidate as Record<string, unknown>;
+    const id = typeof transfer.id === 'string' ? transfer.id : '';
+    const fromAccountId =
+      typeof transfer.fromAccountId === 'string'
+        ? transfer.fromAccountId
+        : '';
+    const toAccountId =
+      typeof transfer.toAccountId === 'string' ? transfer.toAccountId : '';
+    const date = typeof transfer.date === 'string' ? transfer.date : '';
+    const time = typeof transfer.time === 'string' ? transfer.time : '';
+    const amount = transfer.amount;
+    if (
+      !id ||
+      ids.has(id) ||
+      !accountIds.has(fromAccountId) ||
+      !accountIds.has(toAccountId) ||
+      fromAccountId === toAccountId ||
+      typeof amount !== 'number' ||
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      !isValidTime(time) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      date > getDateKey() ||
+      typeof transfer.note !== 'string'
+    ) {
+      return [];
+    }
+    ids.add(id);
+    return [
+      {
+        id,
+        fromAccountId: fromAccountId as LedgerAccountId,
+        toAccountId: toAccountId as LedgerAccountId,
+        amount: Math.round(amount * 100) / 100,
+        note: transfer.note,
+        time,
+        date,
+      } satisfies LedgerTransfer,
+    ];
+  });
+}
+
 export function getCategoriesForType(
   customCategories: CustomCategory[],
   type: EntryType
@@ -450,6 +707,58 @@ export function getCategoriesForType(
       .filter((category) => category.type === type)
       .map(customCategoryToDefinition),
   ];
+}
+
+export function getAccountBalances(ledger: LedgerState) {
+  const balances = Object.fromEntries(
+    ledger.accounts.map((account) => [account.id, account.openingBalance])
+  ) as Record<string, number>;
+
+  for (const entry of ledger.entries) {
+    if (!(entry.accountId in balances)) {
+      continue;
+    }
+    balances[entry.accountId] +=
+      entry.type === 'income' ? entry.amount : -entry.amount;
+  }
+
+  for (const transfer of ledger.transfers) {
+    if (transfer.fromAccountId in balances) {
+      balances[transfer.fromAccountId] -= transfer.amount;
+    }
+    if (transfer.toAccountId in balances) {
+      balances[transfer.toAccountId] += transfer.amount;
+    }
+  }
+
+  return balances;
+}
+
+export function getTotalAssets(ledger: LedgerState) {
+  return Object.values(getAccountBalances(ledger)).reduce(
+    (total, balance) => total + balance,
+    0
+  );
+}
+
+export function getActivitiesForDate(
+  ledger: LedgerState,
+  date: string
+): LedgerActivity[] {
+  return [
+    ...ledger.entries
+      .filter((entry) => entry.date === date)
+      .map((entry) => ({ kind: 'entry' as const, entry })),
+    ...ledger.transfers
+      .filter((transfer) => transfer.date === date)
+      .map((transfer) => ({ kind: 'transfer' as const, transfer })),
+  ].sort((left, right) => {
+    const leftActivity =
+      left.kind === 'entry' ? left.entry : left.transfer;
+    const rightActivity =
+      right.kind === 'entry' ? right.entry : right.transfer;
+    return leftActivity.time.localeCompare(rightActivity.time);
+  });
 }
 
 export function resolveCategory(

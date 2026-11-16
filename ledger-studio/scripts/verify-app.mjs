@@ -389,11 +389,15 @@ async function main() {
     );
     const exportedBackup = JSON.parse(exportedContent);
     if (
-      exportedBackup.version !== 2 ||
+      exportedBackup.version !== 3 ||
       exportedBackup.data?.customCategories?.length !== 2 ||
-      exportedBackup.data?.entries?.some((entry) => entry.type !== 'expense')
+      !exportedBackup.data?.accounts?.length ||
+      !exportedBackup.data?.defaultAccountId ||
+      exportedBackup.data?.entries?.some(
+        (entry) => entry.type !== 'expense' || !entry.accountId
+      )
     ) {
-      throw new Error('Export did not contain the V2 category and entry schema.');
+      throw new Error('Export did not contain the V3 account schema.');
     }
 
     await evaluate(`(() => {
@@ -455,7 +459,10 @@ async function main() {
       storedState.monthlyBudget !== 1800 ||
       storedState.themeColor !== '#5B9A7B' ||
       storedState.customCategories?.length !== 0 ||
-      storedState.entries.some((entry) => entry.type !== 'expense')
+      storedState.entries.some((entry) => entry.type !== 'expense') ||
+      storedState.accounts?.length !== 1 ||
+      storedState.accounts[0]?.id !== 'account-cash' ||
+      storedState.entries.some((entry) => entry.accountId !== 'account-cash')
     ) {
       throw new Error('V1 backup migration did not preserve and upgrade the ledger.');
     }
@@ -521,7 +528,10 @@ async function main() {
       storedState.entries?.length !== 2 ||
       storedState.customCategories?.length !== 2 ||
       storedState.entries[0]?.type !== 'expense' ||
-      storedState.entries[1]?.type !== 'income'
+      storedState.entries[1]?.type !== 'income' ||
+      storedState.accounts?.length !== 1 ||
+      storedState.accounts[0]?.id !== 'account-cash' ||
+      storedState.entries.some((entry) => entry.accountId !== 'account-cash')
     ) {
       throw new Error('V2 backup did not restore categories and income.');
     }
@@ -568,7 +578,7 @@ async function main() {
     }
 
     await click('导入备份');
-    await injectFile(JSON.stringify({ ...importedBackup, version: 3 }));
+    await injectFile(JSON.stringify({ ...importedBackup, version: 4 }));
     await waitForText('备份版本不受支持');
 
     const { customCategories: omittedCategories, ...dataWithoutCategories } =
@@ -867,6 +877,257 @@ async function main() {
     await evaluate(`localStorage.removeItem('yiye-ledger-v1'); location.reload(); true`);
     await waitForText('今天还没有流水');
 
+    await click('我的');
+    await waitForText('总资产');
+    await clickAriaExact('管理资金账户');
+    await waitForText('资金账户');
+    await clickAriaExact('新增资金账户');
+    await waitForText('新增资金账户');
+    await fill('账户名称', '支付宝钱包');
+    await clickAriaExact('账户类型设为支付宝');
+    await clickAriaExact('选择账户颜色#4B7F9D');
+    await fill('账户初始余额', '120');
+    await clickAriaExact('保存资金账户');
+    await waitForText('支付宝钱包');
+    await clickAriaExact('将支付宝钱包设为默认账户');
+    await waitForText('支付宝钱包已设为默认账户');
+    await screenshot('preview-accounts.png');
+    await evaluate(`(() => {
+      const heading = [...document.querySelectorAll('*')]
+        .find((element) => element.textContent === '资金账户');
+      heading?.scrollIntoView({ block: 'start' });
+      return true;
+    })()`);
+    await delay(350);
+    await screenshot('preview-account-manager.png');
+
+    await clickAriaExact('新增资金账户');
+    await fill('账户名称', '支付宝钱包');
+    await clickAriaExact('保存资金账户');
+    await waitForText('已有同名资金账户');
+    await clickAriaExact('关闭账户编辑');
+
+    await clickAriaExact('账户转账');
+    await waitForText('转账不计入收入、支出或预算');
+    await fill('转账金额', '30');
+    await fill('转账时间', '12:00');
+    await fill('转账备注', '转到现金备用');
+    await screenshot('preview-transfer.png');
+    await click('确认转账');
+    await waitForText('总资产');
+
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (
+      storedState.accounts?.length !== 2 ||
+      storedState.defaultAccountId !==
+        storedState.accounts.find((account) => account.name === '支付宝钱包')?.id ||
+      storedState.transfers?.length !== 1
+    ) {
+      throw new Error('Account creation or default-account persistence failed.');
+    }
+    const cashAccount = storedState.accounts.find(
+      (account) => account.name === '现金'
+    );
+    const alipayAccount = storedState.accounts.find(
+      (account) => account.name === '支付宝钱包'
+    );
+    if (
+      cashAccount?.openingBalance !== 0 ||
+      alipayAccount?.openingBalance !== 120
+    ) {
+      throw new Error('Account opening balances were not persisted.');
+    }
+
+    await click('首页');
+    const transferHomeText = await waitForText('账户转账');
+    if (!transferHomeText.includes('支付宝钱包') || !transferHomeText.includes('30.00')) {
+      throw new Error('Home did not show the account transfer activity.');
+    }
+    await screenshot('preview-home-accounts.png');
+    await click('账户转账');
+    await waitForText('编辑账户转账');
+    await fill('转账金额', '40');
+    await click('确认转账');
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (storedState.transfers?.[0]?.amount !== 40) {
+      throw new Error('Editing a transfer did not persist the new amount.');
+    }
+
+    await click('账户转账');
+    await click('删除');
+    await waitForText('确定删除这笔转账');
+    await click('确认删除');
+    await waitForText('今天还没有流水');
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (storedState.transfers?.length !== 0) {
+      throw new Error('Deleting a transfer did not remove it.');
+    }
+
+    await click('我的');
+    await waitForText('总资产');
+    await clickAriaExact('管理资金账户');
+    await clickAriaExact('删除现金账户');
+    await clickAriaExact('确认删除现金账户');
+    await waitForText('资金账户已删除');
+    await clickAriaExact('删除支付宝钱包账户');
+    await clickAriaExact('确认删除支付宝钱包账户');
+    await waitForText('至少需要保留一个资金账户');
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (
+      storedState.accounts?.length !== 1 ||
+      storedState.accounts[0]?.name !== '支付宝钱包'
+    ) {
+      throw new Error('Account deletion protection failed.');
+    }
+
+    const v3Backup = {
+      format: 'yiye-ledger-backup',
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      data: {
+        accounts: [
+          {
+            id: 'account-cash',
+            name: '现金',
+            kind: 'cash',
+            color: '#397A99',
+            openingBalance: 50,
+          },
+          {
+            id: 'account-alipay',
+            name: '支付宝',
+            kind: 'alipay',
+            color: '#4B7F9D',
+            openingBalance: 200,
+          },
+        ],
+        defaultAccountId: 'account-alipay',
+        transfers: [
+          {
+            id: 'transfer-backup',
+            fromAccountId: 'account-alipay',
+            toAccountId: 'account-cash',
+            amount: 25,
+            note: '备份转账',
+            time: '10:20',
+            date: dateKey(today),
+          },
+        ],
+        customCategories: [],
+        monthlyBudget: 500,
+        monthlySpentBeforeToday: 0,
+        yesterdayTotal: 0,
+        themeColor: '#5B9A7B',
+        entries: [
+          {
+            id: 'entry-v3-account',
+            type: 'expense',
+            categoryId: 'meal',
+            accountId: 'account-cash',
+            name: '备份早餐',
+            note: '账户关联测试',
+            amount: 12,
+            time: '08:00',
+            date: dateKey(today),
+          },
+        ],
+      },
+    };
+
+    await click('导入备份');
+    await injectFile(JSON.stringify(v3Backup));
+    await waitForText('确认替换当前账本');
+    await click('确认替换');
+    await waitForText('导入成功');
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (
+      storedState.entries?.[0]?.accountId !== 'account-cash' ||
+      storedState.transfers?.[0]?.id !== 'transfer-backup' ||
+      storedState.accounts?.length !== 2 ||
+      storedState.defaultAccountId !== 'account-alipay'
+    ) {
+      throw new Error('V3 backup did not restore accounts and transfers.');
+    }
+
+    await click('导入备份');
+    await injectFile(
+      JSON.stringify({
+        ...v3Backup,
+        data: {
+          ...v3Backup.data,
+          transfers: [
+            {
+              ...v3Backup.data.transfers[0],
+              toAccountId: 'account-alipay',
+            },
+          ],
+        },
+      })
+    );
+    await waitForText('备份中的转账内容无效');
+    storedState = await evaluate(
+      `JSON.parse(localStorage.getItem('yiye-ledger-v1') ?? '{}')`
+    );
+    if (storedState.transfers?.[0]?.id !== 'transfer-backup') {
+      throw new Error('Rejected V3 transfer changed existing data.');
+    }
+
+    const accountColors = [
+      '#397A99',
+      '#4B7F9D',
+      '#5B9A7B',
+      '#6A8F5D',
+      '#C9975A',
+      '#C47A8A',
+      '#8B7BC1',
+      '#6B79B8',
+    ];
+    const accountKinds = ['cash', 'bank', 'alipay', 'wechat', 'campus', 'other'];
+    const twentyAccounts = Array.from({ length: 20 }, (_, index) => ({
+      id: `account-limit-${String(index + 1).padStart(2, '0')}`,
+      name: `资金账户${String(index + 1).padStart(2, '0')}`,
+      kind: accountKinds[index % accountKinds.length],
+      color: accountColors[index % accountColors.length],
+      openingBalance: index * 10,
+    }));
+    const accountLimitBackup = {
+      ...v3Backup,
+      exportedAt: new Date().toISOString(),
+      data: {
+        ...v3Backup.data,
+        accounts: twentyAccounts,
+        defaultAccountId: twentyAccounts[0].id,
+        entries: [],
+        transfers: [],
+      },
+    };
+    await click('导入备份');
+    await injectFile(JSON.stringify(accountLimitBackup));
+    await waitForText('确认替换当前账本');
+    await click('确认替换');
+    await waitForText('20/20');
+    const addAccountDisabled = await evaluate(`(() => {
+      const button = document.querySelector('[aria-label="新增资金账户"]');
+      return Boolean(
+        button &&
+        (button.getAttribute('aria-disabled') === 'true' ||
+          button.hasAttribute('disabled'))
+      );
+    })()`);
+    if (!addAccountDisabled) {
+      throw new Error('The 21st account remained available.');
+    }
+
     if (client.errors.length > 0) {
       throw new Error(`Browser errors detected:\n${client.errors.join('\n')}`);
     }
@@ -882,9 +1143,16 @@ async function main() {
           categoryDeleteProtection: true,
           categoryLimit: true,
           dataTransfer: true,
-          backupV2: true,
+          backupV3: true,
           legacyV1Migration: true,
+          legacyV2Migration: true,
           invalidImportProtected: true,
+          accountManagement: true,
+          accountBalanceCalculation: true,
+          accountDeleteProtection: true,
+          accountLimit: true,
+          accountTransfer: true,
+          transferEditDelete: true,
           homeEntryEdit: true,
           incomeEntries: true,
           incomeBudgetExclusion: true,
